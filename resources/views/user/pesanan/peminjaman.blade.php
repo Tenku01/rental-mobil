@@ -7,7 +7,7 @@
 
     <!-- Dependencies -->
     <script type="text/javascript" src="https://app.sandbox.midtrans.com/snap/snap.js"
-        data-client-key="{{ env('MIDTRANS_CLIENT_KEY') }}"></script>
+        data-client-key="{{ config('services.midtrans.client_key') }}"></script>
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://code.jquery.com/ui/1.13.2/jquery-ui.min.js"></script>
@@ -21,17 +21,17 @@
                     jamSewa: '{{ now()->format('H:i') }}',
                     tanggalKembali: '',
                 
-                    // STATE UNTUK SOPIR (SIMPLE)
-                    sopirAvailable: true, // boolean: true/false saja
-                    sisaSopir: 2, // number: jumlah sopir tersedia
-                    isCheckingDriver: false, // boolean: loading state
+                    // STATE UNTUK SOPIR
+                    sopirAvailable: true, 
+                    sisaSopir: 0,
+                    isCheckingDriver: false,
                     addOnSopir: 0, // 0 = tidak, 1 = ya
-                    hargaSopirPerHari: 1500, // harga yang benar
+                    hargaSopirPerHari: 150000, 
                 
                     // HARGA
                     hargaMobil: {{ $mobil->harga }},
                     tipePembayaran: 'dp',
-                    dpManual: 1000,
+                    dpManual: {{ $mobil->harga * 0.5 }}, // Default 50%
                     dpError: '',
                 
                     // HELPER FUNCTIONS
@@ -47,7 +47,17 @@
                         const start = new Date(this.toIsoDate(this.tanggalSewa) + 'T' + this.jamSewa);
                         const end = new Date(this.toIsoDate(this.tanggalKembali) + 'T' + this.jamSewa);
                         if (isNaN(start.getTime()) || isNaN(end.getTime())) return 0;
-                        const diffHours = (end - start) / (1000 * 60 * 60);
+                        
+                        // Hitung selisih waktu dalam milidetik
+                        const diffTime = end - start;
+                        
+                        // Jika waktu kembali <= waktu sewa (tidak valid untuk durasi sewa)
+                        if (diffTime <= 0) return 0;
+
+                        // Konversi ke jam
+                        const diffHours = diffTime / (1000 * 60 * 60);
+                        
+                        // Pembulatan ke atas (per hari)
                         return Math.ceil(diffHours / 24);
                     },
                 
@@ -55,58 +65,43 @@
                         const durasi = this.durasiHari();
                         if (durasi <= 0) return 0;
                         const hargaDasar = durasi * this.hargaMobil;
-                        const biayaSopir = this.addOnSopir ? durasi * this.hargaSopirPerHari : 0;
+                        const biayaSopir = (this.addOnSopir == 1) ? durasi * this.hargaSopirPerHari : 0;
                         return hargaDasar + biayaSopir;
                     },
                 
                     // ✅ FUNGSI UTAMA CEK SOPIR
                     checkDriver() {
-                
-                        console.log('=== checkDriver dipanggil ===');
-                        console.log('tanggalSewa:', this.tanggalSewa);
-                        console.log('tanggalKembali:', this.tanggalKembali);
-                        // Reset state sopir
-                        this.sopirAvailable = true;
-                        this.sisaSopir = 2;
-                        this.addOnSopir = 0;
+                        this.sopirAvailable = true; 
+                        
                         if (!this.tanggalSewa || !this.tanggalKembali) {
-                            console.log('Tanggal sewa atau kembali belum lengkap. Membatalkan pengecekan sopir.');
                             return;
                         }
                 
                         this.isCheckingDriver = true;
+                        
                         const postData = {
                             _token: '{{ csrf_token() }}',
-                            tanggal_sewa: this.tanggalSewa || '',
-                            tanggal_kembali: this.tanggalKembali || ''
+                            tanggal_sewa: this.tanggalSewa,
+                            tanggal_kembali: this.tanggalKembali
                         };
-                        console.log('Data dikirim:', postData);
                 
                         axios.post('{{ route('check.driver') }}', postData)
                             .then(response => {
-                                console.log('✅ RESPONSE DARI SERVER:', response.data);
-                
-                                // ⚠️ PASTIKAN INI DIEKSEKUSI
+                                console.log('Driver Check Response:', response.data);
+                                
                                 this.sopirAvailable = response.data.available;
-                                this.sisaSopir = response.data.sisa || response.data.total_sopir || 0;
-                
-                                console.log('Set state:', {
-                                    sopirAvailable: this.sopirAvailable,
-                                    sisaSopir: this.sisaSopir
-                                });
+                                this.sisaSopir = response.data.sisa || response.data.sisa_sopir || 0;
                 
                                 if (!response.data.available) {
                                     this.addOnSopir = 0;
                                 }
                             })
                             .catch(error => {
-                                console.error('❌ ERROR:', error.response?.data || error.message);
+                                console.error('❌ Driver Check Error:', error);
                                 this.sopirAvailable = false;
-                                this.sisaSopir = 0;
                                 this.addOnSopir = 0;
                             })
                             .finally(() => {
-                                console.log('checkDriver selesai');
                                 this.isCheckingDriver = false;
                             });
                     },
@@ -118,16 +113,14 @@
                         }
                 
                         this.dpManual = Number(this.dpManual);
-                        const minDp = 1000;
-                        const maxDp = 2000;
                         const total = this.totalHarga();
-                
+                        
+                        const minDp = 50000; // Contoh minimal 50rb
+                        
                         if (this.dpManual < minDp) {
-                            this.dpError = 'Minimal DP adalah ' + this.formatRupiah(minDp);
-                        } else if (this.dpManual > maxDp) {
-                            this.dpError = 'Maksimal DP adalah ' + this.formatRupiah(maxDp);
-                        } else if (this.dpManual > total && total > 0) {
-                            this.dpError = 'DP tidak boleh melebihi Total Harga';
+                             this.dpError = 'Minimal DP adalah ' + this.formatRupiah(minDp);
+                        } else if (this.dpManual > total) {
+                            this.dpError = 'DP tidak boleh melebihi Total Harga (' + this.formatRupiah(total) + ')';
                         } else {
                             this.dpError = '';
                         }
@@ -141,12 +134,8 @@
                 
                     updateDP() {
                         if (this.tipePembayaran === 'lunas') {
-                            this.dpManual = 0;
                             this.dpError = '';
                         } else {
-                            if (this.dpManual < 1000) {
-                                this.dpManual = 1000;
-                            }
                             this.validateDP();
                         }
                     },
@@ -155,6 +144,7 @@
                         return 'Rp ' + (Number(number) || 0).toLocaleString('id-ID');
                     }
                 }" x-effect="updateDP()">
+                
                 <h1 class="text-3xl font-extrabold text-center text-cyan-700 mb-8 border-b-2 border-cyan-100 pb-4">
                     FORM PENYEWAAN MOBIL
                 </h1>
@@ -163,8 +153,10 @@
                     enctype="multipart/form-data" class="space-y-8">
                     @csrf
                     <input type="hidden" name="mobil_id" value="{{ $mobil->id }}">
-                    <input type="hidden" name="add_on_sopir" x-model="addOnSopir">
+                    <!-- Input hidden untuk x-model agar terkirim di form submit -->
+                    <input type="hidden" name="add_on_sopir" x-model="addOnSopir"> 
                     <input type="hidden" name="add_on_sopir" x-bind:value="addOnSopir">
+                    
                     <input type="hidden" name="tanggal_kembali_field" x-bind:value="tanggalKembali">
                     <input type="hidden" name="tipe_pembayaran" x-bind:value="tipePembayaran">
 
@@ -196,14 +188,13 @@
                                 <x-input-label for="tanggal_sewa" :value="__('Tanggal Sewa')" class="text-cyan-700 font-medium" />
                                 <x-text-input id="tanggal_sewa" name="tanggal_sewa" type="text"
                                     placeholder="Pilih tanggal sewa"
-                                    class="mt-1 block w-full border-cyan-300 focus:border-cyan-500 focus:ring-cyan-500 rounded-lg"
-                                    autocomplete="off" x-model="tanggalSewa" @change="checkDriver()" readonly
-                                    required />
+                                    class="mt-1 block w-full border-cyan-300 focus:border-cyan-500 focus:ring-cyan-500 rounded-lg cursor-pointer"
+                                    autocomplete="off" x-model="tanggalSewa" readonly required />
                             </div>
                             <div>
                                 <x-input-label for="jam_sewa" :value="__('Jam Sewa (WIB)')" class="text-cyan-700 font-medium" />
                                 <x-text-input id="jam_sewa" name="jam_sewa" type="time"
-                                    class="mt-1 block w-full border-cyan-300 focus:border-cyan-500 focus:ring-cyan-500 rounded-lg"
+                                    class="mt-1 block w-full border-cyan-300 focus:border-cyan-500 focus:ring-cyan-500 rounded-lg cursor-pointer"
                                     x-model="jamSewa" required />
                             </div>
                             <div class="sm:col-span-1">
@@ -211,9 +202,8 @@
                                     class="text-cyan-700 font-medium" />
                                 <x-text-input id="tanggal_kembali" name="tanggal_kembali" type="text"
                                     placeholder="Pilih tanggal kembali"
-                                    class="mt-1 block w-full border-cyan-300 focus:border-cyan-500 focus:ring-cyan-500 rounded-lg"
-                                    autocomplete="off" x-model="tanggalKembali" @change="checkDriver()" readonly
-                                    required />
+                                    class="mt-1 block w-full border-cyan-300 focus:border-cyan-500 focus:ring-cyan-500 rounded-lg cursor-pointer"
+                                    autocomplete="off" x-model="tanggalKembali" readonly required />
 
                             </div>
                         </div>
@@ -223,45 +213,87 @@
                         </p>
                     </div>
 
-                    <!-- --- LOGIKA BARU: ADD-ON SOPIR DINAMIS --- -->
-                    <div class="pt-4 border-t border-gray-100"
-                        x-show="tanggalSewa && tanggalKembali && durasiHari() > 0">
-                        <!-- Loading State -->
-                        <div x-show="isCheckingDriver" x-cloak class="flex items-center gap-2 text-blue-600 mb-3">
-                            <span class="text-sm">Memeriksa ketersediaan sopir...</span>
-                        </div>
-
-                        <!-- ✅ OPSI JIKA SOPIR TERSEDIA -->
-                        <div x-show="!isCheckingDriver && sopirAvailable === true" x-transition.opacity.duration.300ms>
-                            <label class="block font-medium text-sm text-gray-700 mb-2">
-                                Butuh Sopir?
-                                <span class="text-green-600 font-semibold">
-                                    (Tersedia: <span x-text="sisaSopir"></span> sopir)
-                                </span>
-                            </label>
-
-                            <div class="flex space-x-4">
-                                <label class="inline-flex items-center px-4 py-2 border rounded-lg cursor-pointer"
-                                    :class="{ 'bg-blue-50 border-blue-500': addOnSopir === 0 }">
-                                    <input type="radio" name="add_on_sopir" value="0" x-model="addOnSopir"
-                                        class="text-blue-600 mr-2">
-                                    <span>Tidak, Lepas Kunci</span>
-                                </label>
-                                <label class="inline-flex items-center px-4 py-2 border rounded-lg cursor-pointer"
-                                    :class="{ 'bg-blue-50 border-blue-500': addOnSopir === 1 }">
-                                    <input type="radio" name="add_on_sopir" value="1" x-model="addOnSopir"
-                                        class="text-blue-600 mr-2">
-                                    <span>Ya, Butuh Sopir (+Rp 1.500/hari)</span>
-                                </label>
+                    <!-- --- LAYANAN PENGEMUDI (MODIFIED) --- -->
+                    <div class="pt-4 border-t border-gray-100" x-show="tanggalSewa && tanggalKembali && durasiHari() > 0" x-transition>
+                        
+                        <div class="flex items-center justify-between mb-4">
+                            <h3 class="text-lg font-semibold text-gray-900">Layanan Pengemudi</h3>
+                            
+                            <!-- Badge Status -->
+                            <div class="flex items-center gap-2">
+                                <template x-if="isCheckingDriver">
+                                    <span class="px-3 py-1 rounded-full text-xs font-bold bg-gray-200 text-gray-700 animate-pulse flex items-center gap-1">
+                                        <svg class="animate-spin h-3 w-3 text-gray-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                        Mengecek...
+                                    </span>
+                                </template>
+                                <template x-if="!isCheckingDriver && sopirAvailable">
+                                    <span class="px-3 py-1 rounded-full text-xs font-bold bg-green-100 text-green-700 border border-green-200 flex items-center gap-1">
+                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                                        <span x-text="sisaSopir"></span> Tersedia
+                                    </span>
+                                </template>
+                                <template x-if="!isCheckingDriver && !sopirAvailable">
+                                    <span class="px-3 py-1 rounded-full text-xs font-bold bg-red-100 text-red-700 border border-red-200 flex items-center gap-1">
+                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                        Penuh
+                                    </span>
+                                </template>
                             </div>
                         </div>
 
-                        <!-- ❌ PESAN JIKA TIDAK ADA SOPIR TERSEDIA -->
-                        <div x-show="!isCheckingDriver && sopirAvailable === false" x-transition.opacity.duration.500ms
-                            class="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                            <p class="text-sm text-yellow-800">
-                                ⚠️ Maaf, sopir sedang penuh
-                            </p>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            
+                            <!-- Opsi 1: Lepas Kunci -->
+                            <label class="relative flex items-center justify-between p-4 border rounded-xl cursor-pointer hover:border-blue-500 transition-all duration-200 group bg-white shadow-sm"
+                                :class="addOnSopir == 0 ? 'border-blue-500 ring-1 ring-blue-500 bg-blue-50/50' : 'border-gray-200'">
+                                <div class="flex items-center gap-3">
+                                    <div class="flex items-center justify-center w-10 h-10 rounded-full bg-gray-100 text-gray-500 group-hover:bg-blue-100 group-hover:text-blue-600 transition-colors">
+                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+                                    </div>
+                                    <div>
+                                        <span class="block text-sm font-medium text-gray-900">Lepas Kunci</span>
+                                        <span class="block text-xs text-gray-500">Setir sendiri</span>
+                                    </div>
+                                </div>
+                                <input type="radio" name="add_on_sopir_radio" value="0" x-model="addOnSopir" class="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500">
+                            </label>
+
+                            <!-- Opsi 2: Dengan Sopir -->
+                            <label class="relative flex items-center justify-between p-4 border rounded-xl transition-all duration-200 group bg-white shadow-sm"
+                                :class="{
+                                    'border-blue-500 ring-1 ring-blue-500 bg-blue-50/50': addOnSopir == 1,
+                                    'border-gray-200 hover:border-blue-500 cursor-pointer': sopirAvailable,
+                                    'border-gray-100 bg-gray-50 opacity-75 cursor-not-allowed': !sopirAvailable
+                                }">
+                                
+                                <!-- Overlay Disable jika penuh -->
+                                <div x-show="!sopirAvailable && !isCheckingDriver" class="absolute inset-0 bg-gray-100/50 z-10 cursor-not-allowed rounded-xl"></div>
+
+                                <div class="flex items-center gap-3">
+                                    <div class="flex items-center justify-center w-10 h-10 rounded-full"
+                                        :class="sopirAvailable ? 'bg-blue-100 text-blue-600' : 'bg-gray-200 text-gray-400'">
+                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
+                                    </div>
+                                    <div>
+                                        <span class="block text-sm font-medium text-gray-900">Dengan Sopir</span>
+                                        <span class="block text-xs text-blue-600 font-medium">+ {{ number_format(150000, 0, ',', '.') }} /hari</span>
+                                    </div>
+                                </div>
+                                <input type="radio" name="add_on_sopir_radio" value="1" x-model="addOnSopir" 
+                                    :disabled="!sopirAvailable"
+                                    class="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500 disabled:opacity-50">
+                            </label>
+                        </div>
+
+                        <!-- Pesan Alert Jika Penuh -->
+                        <div x-show="!isCheckingDriver && !sopirAvailable" x-transition 
+                            class="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
+                            <svg class="w-5 h-5 text-red-600 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                            <div class="text-sm text-red-700">
+                                <strong>Mohon Maaf, Sopir Penuh.</strong><br>
+                                Semua sopir kami sedang bertugas atau tidak tersedia pada tanggal yang Anda pilih. Silakan pilih opsi Lepas Kunci atau ganti tanggal.
+                            </div>
                         </div>
                     </div>
 
@@ -270,14 +302,14 @@
                         <x-input-label value="Jenis Pembayaran" class="text-cyan-700 font-medium mb-3" />
                         <div class="flex gap-6">
                             <label
-                                class="inline-flex items-center space-x-2 p-3 border rounded-lg transition duration-150"
+                                class="inline-flex items-center space-x-2 p-3 border rounded-lg transition duration-150 cursor-pointer"
                                 :class="{ 'bg-cyan-100 border-cyan-500 shadow-md': tipePembayaran === 'dp', 'bg-gray-50 border-gray-300 hover:border-cyan-400': tipePembayaran !== 'dp' }">
                                 <input type="radio" value="dp" x-model="tipePembayaran"
                                     name="radio-tipe-bayar" class="text-cyan-600 focus:ring-cyan-500">
                                 <span>Bayar DP</span>
                             </label>
                             <label
-                                class="inline-flex items-center space-x-2 p-3 border rounded-lg transition duration-150"
+                                class="inline-flex items-center space-x-2 p-3 border rounded-lg transition duration-150 cursor-pointer"
                                 :class="{ 'bg-cyan-100 border-cyan-500 shadow-md': tipePembayaran === 'lunas', 'bg-gray-50 border-gray-300 hover:border-cyan-400': tipePembayaran !== 'lunas' }">
                                 <input type="radio" value="lunas" x-model="tipePembayaran"
                                     name="radio-tipe-bayar" class="text-cyan-600 focus:ring-cyan-500">
@@ -290,17 +322,20 @@
                     <div x-show="tipePembayaran === 'dp'" x-cloak x-transition.opacity
                         class="mt-4 p-4 border border-yellow-200 bg-yellow-50 rounded-lg">
                         <label for="dpManual" class="block text-sm font-medium text-gray-700">Nominal DP <span
-                                class="text-xs text-gray-500">(Minimal Rp1.000, Maksimal Rp2.000)</span></label>
+                                class="text-xs text-gray-500">(Minimal Rp 50.000)</span></label>
                         <div class="relative mt-1">
                             <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-500">Rp</span>
                             <input type="number" id="dpManual" name="dp" x-model.number="dpManual"
                                 @input="validateDP" :required="tipePembayaran === 'dp'"
                                 :disabled="tipePembayaran === 'lunas'"
                                 class="pl-10 block w-full border-gray-300 rounded-lg shadow-sm focus:ring-cyan-500 focus:border-cyan-500 disabled:opacity-50"
-                                min="1000" max="2000" step="1000">
+                                min="50000" step="5000">
                         </div>
                         <template x-if="dpError">
-                            <p class="text-red-600 text-sm mt-1 flex items-center" x-text="dpError"></p>
+                            <p class="text-red-600 text-sm mt-1 flex items-center">
+                                <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                <span x-text="dpError"></span>
+                            </p>
                         </template>
                     </div>
 
@@ -308,14 +343,13 @@
                     <div class="mt-8 pt-4 border-t-2 border-cyan-400 bg-cyan-50 p-6 rounded-xl shadow-lg"
                         x-show="durasiHari() > 0">
                         <h2 class="text-xl font-bold text-cyan-800 mb-4">Ringkasan Pembayaran</h2>
-                        <input type="hidden" name="add_on_sopir" x-model="addOnSopir">
                         <div class="space-y-2 text-gray-700">
                             <div class="flex justify-between"><span>Durasi Sewa:</span><span
                                     class="font-bold text-cyan-700" x-text="durasiHari() + ' hari'"></span></div>
                             <div class="flex justify-between"><span>Biaya Sewa Mobil:</span><span
                                     class="font-semibold text-cyan-700"
                                     x-text="formatRupiah(durasiHari() * hargaMobil)"></span></div>
-                            <div class="flex justify-between" x-show="addOnSopir === 1"><span>Biaya Sopir:</span><span
+                            <div class="flex justify-between" x-show="addOnSopir == 1"><span>Biaya Sopir:</span><span
                                     class="font-semibold text-cyan-700"
                                     x-text="formatRupiah(durasiHari() * hargaSopirPerHari)"></span></div>
                             <div class="border-t border-cyan-200 pt-3 flex justify-between text-lg font-bold">
@@ -364,8 +398,8 @@
                     <!-- Tombol Submit -->
                     <div class="flex items-center justify-end mt-8 pt-4 border-t border-gray-200">
                         <x-primary-button type="button" id="pay-button"
-                            class="ml-3 w-full sm:w-auto px-6 py-3 text-lg font-semibold bg-cyan-600 hover:bg-cyan-700 transition duration-200 shadow-xl hover:shadow-cyan-400/50">
-                            {{ __('Ajukan Peminjaman & Lanjutkan Pembayaran') }}
+                            class="ml-3 w-full sm:w-auto px-6 py-3 text-lg font-semibold bg-cyan-600 hover:bg-cyan-700 transition duration-200 shadow-xl hover:shadow-cyan-400/50 flex justify-center items-center gap-2">
+                            <span>Ajukan Peminjaman & Lanjutkan Pembayaran</span>
                         </x-primary-button>
                     </div>
                 </form>
@@ -376,13 +410,14 @@
     <!-- Script Datepicker & Toast -->
     <script>
         const bookedDates = @json($bookedDates ?? []);
+        // Kita butuh array string simple untuk jQuery UI Datepicker
         const disabledDates = bookedDates.map(d => d);
 
         function showToast(message) {
             const container = document.getElementById('toast-container');
             const toast = document.createElement('div');
-            toast.className = 'bg-red-600 text-white p-3 rounded-lg shadow-xl mb-2 animate-fadein border border-red-800';
-            toast.textContent = message;
+            toast.className = 'bg-red-600 text-white p-3 rounded-lg shadow-xl mb-2 animate-fadein border border-red-800 flex items-center gap-2';
+            toast.innerHTML = '<span>' + message + '</span>';
             container.appendChild(toast);
             setTimeout(() => {
                 toast.classList.add('animate-fadeout');
@@ -390,6 +425,7 @@
             }, 3000);
         }
 
+        // --- KONFIGURASI DATEPICKER SEWA ---
         $('#tanggal_sewa').datepicker({
             dateFormat: 'dd-mm-yy',
             minDate: 0,
@@ -399,26 +435,28 @@
                 return [isAvailable, isAvailable ? "" : "disabled-date"];
             },
             onSelect: function(selectedDate) {
+                // Set minimal tanggal kembali = besoknya
                 var parts = selectedDate.split("-");
                 var minReturn = new Date(parts[2], parts[1] - 1, parts[0]);
                 minReturn.setDate(minReturn.getDate() + 1);
+                
                 $('#tanggal_kembali').datepicker("option", "minDate", minReturn).val("");
 
-                // Trigger event input agar Alpine model terupdate
+                // Trigger event input manual agar Alpine.js mendeteksi perubahan
                 this.dispatchEvent(new Event('input'));
                 updateJamSewa();
 
-                // 🔥 TRIGGER Cek Sopir Alpine
+                // 🔥 UPDATE STATE ALPINE & TRIGGER CEK SOPIR
                 const alpineEl = document.querySelector('[x-data]');
                 if (alpineEl && alpineEl.__x) {
                     alpineEl.__x.$data.tanggalSewa = selectedDate;
-                    alpineEl.__x.$data.tanggalKembali = ''; // Reset kembali karena baru pilih sewa
-                    alpineEl.__x.$data.checkDriver();
+                    alpineEl.__x.$data.tanggalKembali = ''; 
+                    // Kita belum bisa cek sopir karena tanggal kembali belum diisi
                 }
             }
         });
 
-        // 🔹 MODIFIED: Datepicker Tanggal Kembali dengan Pengecekan Rentang & Sopir
+        // --- KONFIGURASI DATEPICKER KEMBALI ---
         $('#tanggal_kembali').datepicker({
             dateFormat: 'dd-mm-yy',
             beforeShowDay: function(date) {
@@ -431,10 +469,11 @@
                 if (sewa) {
                     var partsSewa = sewa.split("-");
                     var sewaDate = new Date(partsSewa[2], partsSewa[1] - 1, partsSewa[0]);
+                    
                     var partsKembali = selectedDate.split("-");
                     var kembaliDate = new Date(partsKembali[2], partsKembali[1] - 1, partsKembali[0]);
 
-                    // Validasi Dasar (Tanggal Kembali harus > Tanggal Sewa)
+                    // 1. Validasi Dasar (Tanggal Kembali harus > Tanggal Sewa)
                     if (kembaliDate <= sewaDate) {
                         showToast("⚠ Tanggal kembali harus lebih besar dari tanggal sewa!");
                         $(this).val('');
@@ -443,7 +482,8 @@
                         return;
                     }
 
-                    // 🔍 VALIDASI TAMBAHAN: Cek apakah rentang tanggal melompati booking
+                    // 2. Validasi Overlap Booking
+                    // Cek apakah di antara tanggal sewa dan kembali ada tanggal yg sudah dibooking
                     var isOverlap = false;
                     for (var d = new Date(sewaDate); d <= kembaliDate; d.setDate(d.getDate() + 1)) {
                         var checkStr = $.datepicker.formatDate('dd-mm-yy', d);
@@ -455,13 +495,13 @@
 
                     if (isOverlap) {
                         showToast("⚠ Rentang tanggal mencakup tanggal yang sudah dibooking oleh orang lain!");
-                        $(this).val(''); // Reset input
+                        $(this).val(''); 
                         $('#deadline-info').text("");
                     } else {
-                        // Jika valid, update info deadline
                         updateDeadlineInfo();
 
-                        // 🔥 TRIGGER Cek Sopir Alpine saat tanggal kembali valid
+                        // 🔥 TRIGGER CEK SOPIR ALPINE
+                        // Saat tanggal kembali dipilih dan valid, baru kita cek sopir
                         const alpineEl = document.querySelector('[x-data]');
                         if (alpineEl && alpineEl.__x) {
                             alpineEl.__x.$data.tanggalKembali = selectedDate;
@@ -481,25 +521,27 @@
             var today = new Date();
             var parts = tanggalSewa.split("-");
             var selected = new Date(parts[2], parts[1] - 1, parts[0]);
+            
             jamInput.removeAttr("min");
+            
+            // Jika sewa hari ini, jam minimal = jam sekarang + 1 jam
             if (selected.toDateString() === today.toDateString()) {
                 var nextHour = new Date(today.getTime() + (60 * 60 * 1000));
-                var minJam = String(nextHour.getHours()).padStart(2, '0') + ':' + String(nextHour.getMinutes()).padStart(2,
-                    '0');
+                var minJam = String(nextHour.getHours()).padStart(2, '0') + ':' + String(nextHour.getMinutes()).padStart(2, '0');
                 jamInput.attr("min", minJam);
+                
+                // Reset jam input jika kurang dari minJam
                 if (jamInput.val() < minJam) jamInput.val(minJam);
             }
             jamInput[0].dispatchEvent(new Event('input'));
-            updateDeadlineInfo(); // Panggil juga saat update jam
+            updateDeadlineInfo(); 
         }
 
-        // 🔹 Tampilkan deadline pengembalian
         function updateDeadlineInfo() {
             var tanggalKembali = $('#tanggal_kembali').val();
             var jamSewa = $('#jam_sewa').val();
 
             if (tanggalKembali && jamSewa) {
-                // Cari scope Alpine terdekat
                 const alpineEl = document.querySelector('[x-data]');
                 if (alpineEl && alpineEl.__x) {
                     const durasi = alpineEl.__x.$data.durasiHari();
@@ -508,6 +550,7 @@
                         `✅ Durasi Sewa: <span class="font-bold text-cyan-800">${durasi} Hari</span>. Maksimal pengembalian pada pukul <span class="font-semibold text-cyan-800">${jamSewa} WIB</span> tanggal <span class="font-semibold text-cyan-800">${tanggalKembali}</span>.`
                     );
                 } else {
+                    // Fallback non-Alpine (jarang terjadi)
                     $('#deadline-info').html(
                         `⏰ Maksimal pengembalian pada pukul <span class="font-semibold text-cyan-800">${jamSewa} WIB</span> tanggal <span class="font-semibold text-cyan-800">${tanggalKembali}</span>.`
                     );
@@ -517,13 +560,11 @@
             }
         }
 
-        // 🔸 Update deadline saat user ubah jam 
         $('#jam_sewa').on('change', function() {
             updateDeadlineInfo();
-            // Pemicu Alpine untuk update durasi/total harga
             const alpineEl = document.querySelector('[x-data]');
             if (alpineEl && alpineEl.__x) {
-                alpineEl.__x.$data.jamSewa = this.value; // Manual set if needed
+                alpineEl.__x.$data.jamSewa = this.value; 
             }
         });
 
@@ -531,52 +572,53 @@
             updateJamSewa();
         });
 
-        // Axios Submit Logic
+        // --- SUBMIT LOGIC (AXIOS) ---
         document.addEventListener('DOMContentLoaded', function() {
             const payButton = document.getElementById('pay-button');
             const form = document.getElementById('peminjaman-form');
 
             payButton.addEventListener('click', function(e) {
                 e.preventDefault();
+                
                 if (!form.checkValidity()) {
                     showToast('⚠️ Mohon lengkapi semua field yang diperlukan!');
                     form.reportValidity();
                     return;
                 }
+                
                 const formData = new FormData(form);
+                
+                // UI Loading State
                 payButton.disabled = true;
-                payButton.textContent = 'Memproses...';
+                payButton.innerHTML = '<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Memproses...';
 
                 axios.post(form.action, formData)
                     .then(function(response) {
+                        // Reset Button
                         payButton.disabled = false;
                         payButton.textContent = 'Ajukan Peminjaman & Lanjutkan Pembayaran';
 
                         if (response.data.snap_token) {
                             const peminjamanId = response.data.peminjaman_id;
 
+                            // Buka Snap Midtrans
                             snap.pay(response.data.snap_token, {
                                 onSuccess: function() {
-                                    window.location.href =
-                                        "{{ route('payment.success') }}";
+                                    window.location.href = "{{ route('payment.success') }}";
                                 },
                                 onError: function() {
                                     window.location.href = "{{ route('payment.failed') }}";
                                 },
                                 onClose: function() {
-                                    console.log(
-                                        '❌ Snap ditutup. Menghapus data booking...');
-                                    showToast(
-                                        '🚫 Pembayaran dibatalkan. Data peminjaman sedang dihapus...'
-                                    );
+                                    console.log('❌ Snap ditutup. Menghapus data booking...');
+                                    showToast('🚫 Pembayaran dibatalkan. Menghapus pesanan...');
 
+                                    // Hapus data jika user close popup payment
                                     fetch(`/peminjaman/${peminjamanId}/cancel`, {
-                                            method: 'POST',
+                                            method: 'POST', // Menggunakan POST dengan _method DELETE di body (Laravel Style)
                                             headers: {
                                                 'Content-Type': 'application/json',
-                                                'X-CSRF-TOKEN': document.querySelector(
-                                                        'meta[name="csrf-token"]')
-                                                    .content
+                                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
                                             },
                                             body: JSON.stringify({
                                                 _method: 'DELETE'
@@ -584,20 +626,13 @@
                                         })
                                         .then(res => {
                                             if (res.ok) {
-                                                console.log(
-                                                    '✅ Data berhasil dihapus dari database.'
-                                                );
-                                                showToast(
-                                                    '🗑️ Data peminjaman telah dihapus. Silakan pesan ulang jika ingin melanjutkan.'
-                                                );
+                                                console.log('✅ Data berhasil dihapus.');
+                                                showToast('🗑️ Data peminjaman telah dihapus. Silakan pesan ulang.');
                                             } else {
-                                                console.error(
-                                                    'Gagal menghapus data di server.'
-                                                );
+                                                console.error('Gagal menghapus data.');
                                             }
                                         })
-                                        .catch(err => console.error(
-                                            'Error saat request hapus:', err));
+                                        .catch(err => console.error('Error delete request:', err));
                                 }
                             });
                         } else if (response.data.error) {
@@ -607,57 +642,45 @@
                     .catch(function(error) {
                         payButton.disabled = false;
                         payButton.textContent = 'Ajukan Peminjaman & Lanjutkan Pembayaran';
-                        let msg = error.response?.data?.message || error.response?.data?.error ||
-                            'Terjadi kesalahan.';
+                        
+                        let msg = 'Terjadi kesalahan pada server.';
+                        if (error.response && error.response.data) {
+                            msg = error.response.data.message || error.response.data.error || msg;
+                        }
                         showToast('❌ ' + msg);
                     });
             });
         });
     </script>
 
-    <div id="toast-container" class="fixed top-4 right-4 z-50 pointer-events-none"></div>
+    <!-- Toast Container -->
+    <div id="toast-container" class="fixed top-4 right-4 z-50 pointer-events-none space-y-2"></div>
+    
     <style>
-        .ui-datepicker-unselectable.ui-state-disabled,
+        /* Styling untuk tanggal yang didisable di Datepicker */
+        .ui-datepicker-unselectable.ui-state-disabled span,
+        .disabled-date span,
         .disabled-date a {
-            background: #ff0000 !important;
-            color: white !important;
-            opacity: 0.6;
+            background: #ffecec !important; /* Merah muda lembut */
+            color: #d80000 !important; /* Merah teks */
+            opacity: 1 !important; /* Supaya warna jelas */
             cursor: not-allowed !important;
+            text-decoration: line-through;
         }
 
+        /* Animasi Toast */
         @keyframes fadein {
-            from {
-                opacity: 0;
-                transform: translateY(-20px);
-            }
-
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
         }
-
         @keyframes fadeout {
-            from {
-                opacity: 1;
-            }
-
-            to {
-                opacity: 0;
-                transform: translateY(-20px);
-            }
+            from { opacity: 1; }
+            to { opacity: 0; transform: translateY(-20px); }
         }
+        .animate-fadein { animation: fadein 0.3s forwards; }
+        .animate-fadeout { animation: fadeout 0.5s forwards; }
 
-        .animate-fadein {
-            animation: fadein 0.3s forwards;
-        }
-
-        .animate-fadeout {
-            animation: fadeout 0.5s forwards;
-        }
-
-        [x-cloak] {
-            display: none !important;
-        }
+        /* Sembunyikan elemen Alpine sebelum dimuat */
+        [x-cloak] { display: none !important; }
     </style>
 </x-app-layout>
