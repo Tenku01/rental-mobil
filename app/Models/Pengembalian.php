@@ -18,7 +18,6 @@ class Pengembalian extends Model
     protected $fillable = [
         'kode_pengembalian',
         'peminjaman_id',
-        'staff_id',
         'tanggal_pengembalian',
         'status', // 'menunggu pengecekan', 'selesai pengecekan'
     ];
