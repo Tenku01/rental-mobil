@@ -1,0 +1,105 @@
+<?php
+
+use App\Livewire\Forms\LoginForm;
+use Illuminate\Support\Facades\Session;
+use Livewire\Attributes\Layout;
+use Livewire\Volt\Component;
+use Illuminate\Support\Facades\Auth; // Pastikan import Auth ada
+
+new #[Layout('layouts.guest')] class extends Component
+{
+    public LoginForm $form;
+
+    /**
+     * Handle an incoming authentication request.
+     */
+    public function login(): void
+    {
+        $this->validate();
+
+        // -----------------------------------------------------------
+        // BAGIAN KODE PEMBLOKIR "ADMIN" SUDAH SAYA HAPUS DI SINI
+        // -----------------------------------------------------------
+
+        try {
+            $this->form->authenticate();
+        } catch (\Exception $e) {
+            $this->addError('form.email', 'Email atau password salah.');
+            return;
+        }
+
+        Session::regenerate();
+
+        // Ambil data user yang baru saja login
+        $user = Auth::user();
+        $roleId = $user->role_id; // Mengambil role_id langsung dari database
+
+        logger()->info('USER_LOGIN', ['id' => $user->id, 'role' => $roleId]);
+
+        // Redirect berdasarkan Role ID (Sesuai Database Anda)
+        // Role 1 = Admin, 2 = Pelanggan, 3 = Resepsionis, 4 = Sopir, 5 = Staff
+        match ($roleId) {
+            1 => $this->redirect('/admin/dashboard', navigate: true), // Redirect Admin
+            2 => $this->redirect('/dashboard', navigate: true), // Redirect Pelanggan
+            4 => $this->redirect('/sopir/dashboard', navigate: true),
+            5 => $this->redirect('/staff/dashboard', navigate: true),
+            3 => $this->redirect('/resepsionis/dashboard', navigate: true),
+        };
+    }
+};
+?>
+
+<div>
+    <!-- Session Status -->
+    <x-auth-session-status class="mb-4" :status="session('status')" />
+
+    <form wire:submit="login">
+        <!-- Email Address -->
+        <div>
+            <x-input-label for="email" :value="__('Email')" />
+            <x-text-input wire:model="form.email" id="email" class="block mt-1 w-full" type="email" name="email" required autofocus autocomplete="username" />
+            <x-input-error :messages="$errors->get('form.email')" class="mt-2" />
+        </div>
+
+        <!-- Password -->
+        <div class="mt-4">
+            <x-input-label for="password" :value="__('Password')" />
+            <x-text-input wire:model="form.password" id="password" class="block mt-1 w-full"
+                          type="password"
+                          name="password"
+                          required autocomplete="current-password" />
+            <x-input-error :messages="$errors->get('form.password')" class="mt-2" />
+        </div>
+
+        <!-- Remember Me -->
+        <div class="flex items-center justify-between mt-4">
+            <label for="remember" class="inline-flex items-center">
+                <input wire:model="form.remember" id="remember" type="checkbox" class="rounded border-gray-500 text-cyan-600 shadow-sm focus:ring-cyan-500" name="remember">
+                <span class="ms-2 text-sm text-gray-900">{{ __('Ingat Saya') }}</span>
+            </label>
+
+            @if (Route::has('password.request'))
+                <a class="underline text-sm text-gray-600 hover:text-gray-900" href="{{ route('password.request') }}" wire:navigate>
+                    {{ __('Lupa password?') }}
+                </a>
+            @endif
+        </div>
+
+        <!-- Tombol Login -->
+        <div class="flex items-center justify-end mt-4">
+            <x-primary-button class="ms-3">
+                {{ __('Log in') }}
+            </x-primary-button>
+        </div>
+
+        <!-- Link Register -->
+        <div class="mt-4 text-center">
+            <p class="text-sm text-gray-600">
+                {{ __("Belum punya akun?") }}
+                <a href="{{ route('register') }}" class="text-cyan-500 hover:text-cyan-700">
+                    {{ __('Register') }}
+                </a>
+            </p>
+        </div>
+    </form>
+</div>
