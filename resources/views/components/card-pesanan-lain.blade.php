@@ -7,40 +7,40 @@
 
     <div class="p-5">
         <h3 class="text-lg font-semibold mb-2">{{ $item->mobil->merek ?? '-' }} - {{ $item->mobil->tipe ?? '-' }}</h3>
-<p class="text-sm text-gray-600 mb-1">Tanggal Sewa: {{ $item->tanggal_sewa }}</p>
-<p class="text-sm text-gray-600 mb-1">Tanggal Kembali: {{ $item->tanggal_kembali }}</p>
+        <p class="text-sm text-gray-600 mb-1">Tanggal Sewa: {{ $item->tanggal_sewa }}</p>
+        <p class="text-sm text-gray-600 mb-1">Tanggal Kembali: {{ $item->tanggal_kembali }}</p>
 
-<p class="text-sm text-gray-600 mb-1">
-    Status:
-    <span class="font-medium
-        @if($item->status === 'selesai') text-green-600
-        @elseif($item->status === 'pembayaran dp') text-yellow-600
-        @elseif($item->status === 'menunggu pembayaran') text-blue-600
-        @elseif($item->status === 'dibatalkan') text-red-600
-        @else text-gray-600 @endif">
-        {{ ucfirst($item->status) }}
-    </span>
-</p>
+        <p class="text-sm text-gray-600 mb-1">
+            Status:
+            <span class="font-medium
+                @if($item->status === 'selesai') text-green-600
+                @elseif($item->status === 'pembayaran dp') text-yellow-600
+                @elseif($item->status === 'menunggu pembayaran') text-blue-600
+                @elseif($item->status === 'dibatalkan') text-red-600
+                @else text-gray-600 @endif">
+                {{ ucfirst($item->status) }}
+            </span>
+        </p>
 
-<p class="text-sm text-gray-600 mb-1">
-    Total Harga: Rp {{ number_format($item->total_harga, 0, ',', '.') }} <br>
-    DP Dibayarkan: Rp {{ number_format($item->dp_dibayarkan, 0, ',', '.') }} <br>
-    @if($activeTab === 'sudah dibayar lunas')
-        Pelunasan: Rp {{ number_format($item->sisa_bayar, 0, ',', '.') }}
-    @else
-        Sisa Bayar: Rp {{ number_format($item->sisa_bayar, 0, ',', '.') }}
-    @endif
-</p>
+        <p class="text-sm text-gray-600 mb-1">
+            Total Harga: Rp {{ number_format($item->total_harga, 0, ',', '.') }} <br>
+            DP Dibayarkan: Rp {{ number_format($item->dp_dibayarkan, 0, ',', '.') }} <br>
+            @if($activeTab === 'sudah dibayar lunas')
+                Pelunasan: Rp {{ number_format($item->sisa_bayar, 0, ',', '.') }}
+            @else
+                Sisa Bayar: Rp {{ number_format($item->sisa_bayar, 0, ',', '.') }}
+            @endif
+        </p>
 
-{{-- Kondisi Mobil Saat Ini, hanya tampil di tab "Belum Diambil" dan "Berlangsung" --}}
-@if($activeTab === 'sudah dibayar lunas' || $activeTab === 'berlangsung')
-    <p class="text-sm text-gray-600 mb-1">
-        Kondisi Mobil:
-        <span class="font-medium {{ $item->kondisi_mobil ? 'text-gray-800' : 'text-gray-400' }}">
-            {{ $item->kondisi_mobil ?? 'Belum ada kondisi yang dicatat' }}
-        </span>
-    </p>
-@endif
+        {{-- Kondisi Mobil Saat Ini, hanya tampil di tab "Belum Diambil" dan "Berlangsung" --}}
+        @if($activeTab === 'sudah dibayar lunas' || $activeTab === 'berlangsung')
+            <p class="text-sm text-gray-600 mb-1">
+                Kondisi Mobil:
+                <span class="font-medium {{ $item->kondisi_mobil ? 'text-gray-800' : 'text-gray-400' }}">
+                    {{ $item->kondisi_mobil ?? 'Belum ada kondisi yang dicatat' }}
+                </span>
+            </p>
+        @endif
 
         {{-- 🔹 Status Pengajuan Pembatalan --}}
         @php
@@ -62,7 +62,17 @@
                 Lihat Detail Mobil
             </a>
 
-            {{-- 🔸 Belum Lunas --}}
+            {{-- 🔸 Menunggu Pembayaran (NEW) --}}
+            @if($activeTab === 'menunggu pembayaran')
+                @unless($isPendingCancel)
+                    <button onclick="bukaModalBatal({{ $item->id }})"
+                        class="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition w-full text-center">
+                        Batalkan Pesanan
+                    </button>
+                @endunless
+            @endif
+
+            {{-- 🔸 Belum Lunas (DP) --}}
             @if($activeTab === 'pembayaran dp')
                 <button onclick="bayarSisa({{ $item->id }})"
                     class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition w-full text-center">
@@ -70,7 +80,7 @@
                 </button>
             @endif
 
-            {{-- 🔸 Belum Diambil --}}
+            {{-- 🔸 Belum Diambil (Lunas) --}}
             @if($activeTab === 'sudah dibayar lunas')
                 <button onclick="bukaModal({{ $item->id }})"
                     class="bg-yellow-600 text-white px-4 py-2 rounded-lg hover:bg-yellow-700 transition w-full text-center">
@@ -124,7 +134,6 @@
                                     Batal
                                 </button>
 
-                                {{-- PERBAIKAN: Menggunakan route tanpa prefix 'user.' --}}
                                 <form action="{{ route('pengembalian.store', ['peminjaman_id' => $item->id]) }}" method="POST" class="flex-1">
                                     @csrf
                                     <button type="submit"
@@ -139,5 +148,4 @@
             @endif
         </div>
     </div>
-    
 </div>

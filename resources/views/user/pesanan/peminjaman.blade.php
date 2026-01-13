@@ -26,7 +26,7 @@
                     sisaSopir: 0,
                     isCheckingDriver: false,
                     addOnSopir: 0, // 0 = tidak, 1 = ya
-                    hargaSopirPerHari: 150000, 
+                    hargaSopirPerHari: 1500, 
                 
                     // HARGA
                     hargaMobil: {{ $mobil->harga }},
@@ -92,8 +92,10 @@
                                 this.sopirAvailable = response.data.available;
                                 this.sisaSopir = response.data.sisa || response.data.sisa_sopir || 0;
                 
-                                if (!response.data.available) {
-                                    this.addOnSopir = 0;
+                                // 🔥 LOGIKA BARU: Jika Tidak Available / 0
+                                if (!this.sopirAvailable || this.sisaSopir === 0) {
+                                    this.sopirAvailable = false; // Paksa false jika sisa 0
+                                    this.addOnSopir = 0;         // Otomatis pindah ke Lepas Kunci
                                 }
                             })
                             .catch(error => {
@@ -115,7 +117,7 @@
                         this.dpManual = Number(this.dpManual);
                         const total = this.totalHarga();
                         
-                        const minDp = 50000; // Contoh minimal 50rb
+                        const minDp = 1000; // Contoh minimal 50rb
                         
                         if (this.dpManual < minDp) {
                              this.dpError = 'Minimal DP adalah ' + this.formatRupiah(minDp);
@@ -214,7 +216,7 @@
                     </div>
 
                     <!-- --- LAYANAN PENGEMUDI (MODIFIED) --- -->
-                    <div class="pt-4 border-t border-gray-100" x-show="tanggalSewa && tanggalKembali && durasiHari() > 0" x-transition>
+               <div class="pt-4 border-t border-gray-100" x-show="tanggalSewa && tanggalKembali && durasiHari() > 0" x-transition>
                         
                         <div class="flex items-center justify-between mb-4">
                             <h3 class="text-lg font-semibold text-gray-900">Layanan Pengemudi</h3>
@@ -259,27 +261,35 @@
                                 <input type="radio" name="add_on_sopir_radio" value="0" x-model="addOnSopir" class="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500">
                             </label>
 
-                            <!-- Opsi 2: Dengan Sopir -->
+                            <!-- Opsi 2: Dengan Sopir (UPDATED) -->
                             <label class="relative flex items-center justify-between p-4 border rounded-xl transition-all duration-200 group bg-white shadow-sm"
                                 :class="{
                                     'border-blue-500 ring-1 ring-blue-500 bg-blue-50/50': addOnSopir == 1,
                                     'border-gray-200 hover:border-blue-500 cursor-pointer': sopirAvailable,
-                                    'border-gray-100 bg-gray-50 opacity-75 cursor-not-allowed': !sopirAvailable
+                                    'border-gray-100 bg-gray-100 opacity-50 cursor-not-allowed': !sopirAvailable
                                 }">
                                 
-                                <!-- Overlay Disable jika penuh -->
-                                <div x-show="!sopirAvailable && !isCheckingDriver" class="absolute inset-0 bg-gray-100/50 z-10 cursor-not-allowed rounded-xl"></div>
+                                <!-- Overlay Transparan untuk Mencegah Klik -->
+                                <div x-show="!sopirAvailable" class="absolute inset-0 z-10 cursor-not-allowed" @click.prevent></div>
 
                                 <div class="flex items-center gap-3">
                                     <div class="flex items-center justify-center w-10 h-10 rounded-full"
-                                        :class="sopirAvailable ? 'bg-blue-100 text-blue-600' : 'bg-gray-200 text-gray-400'">
+                                        :class="sopirAvailable ? 'bg-blue-100 text-blue-600' : 'bg-gray-300 text-gray-500'">
                                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
                                     </div>
                                     <div>
                                         <span class="block text-sm font-medium text-gray-900">Dengan Sopir</span>
-                                        <span class="block text-xs text-blue-600 font-medium">+ {{ number_format(150000, 0, ',', '.') }} /hari</span>
+                                        
+                                        <!-- Teks Berubah Tergantung Status -->
+                                        <template x-if="sopirAvailable">
+                                            <span class="block text-xs text-blue-600 font-medium">+ {{ number_format(1500, 0, ',', '.') }} /hari</span>
+                                        </template>
+                                        <template x-if="!sopirAvailable">
+                                            <span class="block text-xs text-red-600 font-bold mt-1">HABIS / TIDAK TERSEDIA</span>
+                                        </template>
                                     </div>
                                 </div>
+                                
                                 <input type="radio" name="add_on_sopir_radio" value="1" x-model="addOnSopir" 
                                     :disabled="!sopirAvailable"
                                     class="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500 disabled:opacity-50">
@@ -322,14 +332,14 @@
                     <div x-show="tipePembayaran === 'dp'" x-cloak x-transition.opacity
                         class="mt-4 p-4 border border-yellow-200 bg-yellow-50 rounded-lg">
                         <label for="dpManual" class="block text-sm font-medium text-gray-700">Nominal DP <span
-                                class="text-xs text-gray-500">(Minimal Rp 50.000)</span></label>
+                                class="text-xs text-gray-500">(Minimal Rp 50.000 / testing 1.000)</span></label>
                         <div class="relative mt-1">
                             <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-500">Rp</span>
                             <input type="number" id="dpManual" name="dp" x-model.number="dpManual"
                                 @input="validateDP" :required="tipePembayaran === 'dp'"
                                 :disabled="tipePembayaran === 'lunas'"
                                 class="pl-10 block w-full border-gray-300 rounded-lg shadow-sm focus:ring-cyan-500 focus:border-cyan-500 disabled:opacity-50"
-                                min="50000" step="5000">
+                                min="1000" step="1000">
                         </div>
                         <template x-if="dpError">
                             <p class="text-red-600 text-sm mt-1 flex items-center">
@@ -592,13 +602,24 @@
                 payButton.disabled = true;
                 payButton.innerHTML = '<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Memproses...';
 
-                axios.post(form.action, formData)
+                 axios.post(form.action, formData)
                     .then(function(response) {
                         // Reset Button
                         payButton.disabled = false;
                         payButton.textContent = 'Ajukan Peminjaman & Lanjutkan Pembayaran';
 
-                        if (response.data.snap_token) {
+                        // --- LOGIKA BARU: CEK CASH VS MIDTRANS ---
+                        
+                        // 1. Jika Pembayaran Cash (Sukses Langsung)
+                        if (response.data.status === 'success') {
+                            showToast('✅ ' + response.data.message);
+                            // Redirect setelah delay sedikit agar user bisa baca toast
+                            setTimeout(function() {
+                                window.location.href = response.data.redirect_url;
+                            }, 1500);
+                        }
+                        // 2. Jika Midtrans (Snap Token)
+                        else if (response.data.snap_token) {
                             const peminjamanId = response.data.peminjaman_id;
 
                             // Buka Snap Midtrans
@@ -615,7 +636,7 @@
 
                                     // Hapus data jika user close popup payment
                                     fetch(`/peminjaman/${peminjamanId}/cancel`, {
-                                            method: 'POST', // Menggunakan POST dengan _method DELETE di body (Laravel Style)
+                                            method: 'POST', 
                                             headers: {
                                                 'Content-Type': 'application/json',
                                                 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
@@ -635,7 +656,9 @@
                                         .catch(err => console.error('Error delete request:', err));
                                 }
                             });
-                        } else if (response.data.error) {
+                        } 
+                        // 3. Error dari Backend
+                        else if (response.data.error) {
                             showToast('❌ ' + response.data.error);
                         }
                     })

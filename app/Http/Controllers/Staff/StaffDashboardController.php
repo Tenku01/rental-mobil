@@ -7,7 +7,6 @@ use App\Models\Pengembalian;
 use App\Models\Fine;
 use App\Models\VehicleDamageReport;
 use App\Models\VehicleInspection;
-use App\Models\Peminjaman;
 use App\Models\Staff;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -15,78 +14,104 @@ use Carbon\Carbon;
 
 class StaffDashboardController extends Controller
 {
+    /**
+     * Menampilkan dashboard staff dengan metrik ringkas.
+     */
     public function dashboard()
     {
-        $totalCompleted = Pengembalian::where('status', 'Selesai')->count();
+        $totalCompleted = Pengembalian::whereIn('status', ['selesai', 'selesai pengecekan'])->count();
         $needsReview = Pengembalian::where('status', 'menunggu pengecekan')->count();
 
-      $metrics = [
-        [
-        'label' => 'Perlu Cek',
-        'value' => $needsReview,
-        'icon_path' => '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667
-            1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464
-            0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>',
-        'color' => 'yellow',
-    ],
-    [
-        'label' => 'Total Selesai',
-        'value' => $totalCompleted,
-        'icon_path' => '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-            d="M5 13l4 4L19 7"></path>',
-        'color' => 'green',
-    ],
-    
-];
+        $metrics = [
+            [
+                'label' => 'Perlu Cek',
+                'value' => $needsReview,
+                'icon_path' => '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>',
+                'color' => 'yellow',
+            ],
+            [
+                'label' => 'Total Selesai',
+                'value' => $totalCompleted,
+                'icon_path' => '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>',
+                'color' => 'green',
+            ],
+        ];
 
-        $latestChecks = Pengembalian::latest('tanggal_pengembalian')
-            ->whereNotNull('staff_id')
-            ->with('staff.user')
+        $latestChecks = Pengembalian::with(['peminjaman.user', 'peminjaman.mobil'])
+            ->orderByRaw("FIELD(status, 'menunggu pengecekan') DESC")
+            ->orderBy('tanggal_pengembalian', 'desc')
             ->take(5)
             ->get();
 
         return view('staff.dashboard', compact('metrics', 'latestChecks'));
     }
 
+    /**
+     * Menampilkan daftar semua antrean pengembalian.
+     */
     public function index()
     {
-        return view('staff.pengecekan.index');
+        $pengembalian = Pengembalian::with(['peminjaman.user', 'peminjaman.mobil'])
+            ->orderByRaw("FIELD(status, 'menunggu pengecekan', 'selesai pengecekan', 'selesai')")
+            ->orderBy('tanggal_pengembalian', 'desc')
+            ->paginate(10);
+            
+        return view('staff.pengecekan.index', compact('pengembalian'));
     }
 
+    /**
+     * Halaman form pengecekan.
+     */
     public function cek(Request $request, $kode_pengembalian)
     {
         $pengembalian = Pengembalian::where('kode_pengembalian', $kode_pengembalian)
             ->with(['peminjaman.mobil', 'peminjaman.user', 'fines', 'damageReports'])
             ->first();
 
-        if (!$pengembalian) {
+        if (!$pengembalian || !$pengembalian->peminjaman) {
             return redirect()->route('staff.pengecekan.index')
-                ->with('error', 'Kode pengembalian tidak ditemukan.');
+                ->with('error', 'Data tidak ditemukan.');
         }
 
-        if ($pengembalian->status == 'Selesai') {
-            return redirect()->route('staff.pengecekan.index')
-                ->with('warning', 'Pengembalian ini sudah selesai.');
-        }
+        $mobil = $pengembalian->peminjaman->mobil;
+        $tglKembali = $pengembalian->peminjaman->tanggal_kembali;
+        $jamSewa = $pengembalian->peminjaman->jam_sewa; 
+        $hargaPerHari = $mobil->harga ?? 0;
+        
+        $infoMobil = $mobil 
+            ? "{$mobil->merek} {$mobil->tipe} ({$mobil->id})" 
+            : "Plat: " . ($pengembalian->peminjaman->mobil_id ?? 'N/A');
+        
+        $dueDateTime = Carbon::parse($tglKembali . ' ' . $jamSewa);
+        $returnedDateTime = $pengembalian->tanggal_pengembalian 
+                            ? Carbon::parse($pengembalian->tanggal_pengembalian) 
+                            : Carbon::now();
 
-        // Hitung keterlambatan
-        $due = Carbon::parse($pengembalian->peminjaman->tanggal_kembali);
-        $returned = Carbon::parse($pengembalian->tanggal_pengembalian);
+        $totalHoursDiff = $dueDateTime->diffInHours($returnedDateTime, false);
+        $jamTerlambat = max(0, $totalHoursDiff);
 
-        $lateDays = max(0, $due->diffInDays($returned, false));
-        $lateFine = $lateDays * 50000;
+        // Rumus denda: 10% harga harian dikali jam keterlambatan
+        $lateFine = ($hargaPerHari * 0.1) * $jamTerlambat;
 
-        $totalDendaAwal = $pengembalian->getTotalDendaAttribute();
+        // Ambil denda dari DB (kerusakan sebelumnya)
+        $existingDenda = $pengembalian->fines->sum('total_denda') ?? 0;
+
+        // Tentukan nilai awal untuk AlpineJS (Denda DB + Denda Keterlambatan Baru)
+        $totalFines = $existingDenda + $lateFine;
 
         return view('staff.pengecekan.detail', compact(
             'pengembalian',
-            'lateDays',
+            'jamTerlambat',
             'lateFine',
-            'totalDendaAwal'
+            'hargaPerHari',
+            'totalFines',
+            'infoMobil'
         ));
     }
 
+    /**
+     * Finalisasi pengecekan.
+     */
     public function finalisasiPengecekan(Request $request, $kode_pengembalian)
     {
         $request->validate([
@@ -95,27 +120,27 @@ class StaffDashboardController extends Controller
             'damage_description' => 'nullable|string',
             'damage_cost' => 'nullable|numeric|min:0',
             'late_fine' => 'nullable|numeric|min:0',
-            'late_days' => 'nullable|numeric|min:0',
-            // 'payment_status' => 'required|string',
-            // 'payment_method' => 'nullable|string',
         ]);
 
         $pengembalian = Pengembalian::where('kode_pengembalian', $kode_pengembalian)->firstOrFail();
         $staff = Staff::where('user_id', Auth::id())->first();
 
-        // 1️⃣ Catat denda keterlambatan
-        if ($request->late_fine > 0) {
-            Fine::create([
-                'peminjaman_id' => $pengembalian->peminjaman_id,
-                'pengembalian_kode' => $kode_pengembalian,
-                'jumlah_denda' => $request->late_fine,
+        $existingFine = Fine::where('peminjaman_id', $pengembalian->peminjaman_id)->first();
+        $oldDamageCost = $existingFine ? $existingFine->denda_kerusakan : 0;
+
+        // Simpan ke tabel fines
+        Fine::updateOrCreate(
+            ['peminjaman_id' => $pengembalian->peminjaman_id],
+            [
+                'denda_keterlambatan' => $request->late_fine ?? 0,
+                'denda_kerusakan' => ($request->damage_cost ?? 0) + $oldDamageCost,
+                'total_denda' => ($request->late_fine ?? 0) + ($request->damage_cost ?? 0) + $oldDamageCost,
                 'status' => 'belum dibayar',
                 'tanggal_terdeteksi' => Carbon::today(),
-                'keterangan' => "Keterlambatan {$request->late_days} hari"
-            ]);
-        }
+                'keterangan' => $request->damage_description ?? 'Selesai Pengecekan'
+            ]
+        );
 
-        // 2️⃣ Catat kerusakan (jika ada)
         if ($request->damage_description && $request->damage_cost > 0) {
             VehicleDamageReport::create([
                 'mobil_id' => $pengembalian->peminjaman->mobil_id,
@@ -125,66 +150,38 @@ class StaffDashboardController extends Controller
             ]);
         }
 
-        // 3️⃣ Catat hasil inspeksi
         VehicleInspection::create([
             'mobil_id' => $pengembalian->peminjaman->mobil_id,
-            'staff_id' => $staff?->id,
+            'staff_id' => $staff?->id ?? Auth::id(),
             'pengembalian_kode' => $kode_pengembalian,
             'condition' => $request->inspection_condition,
             'keterangan' => $request->inspection_notes
         ]);
         
-// 4️⃣ Update status pengembalian
-$pengembalian->update([
-    'status' => 'selesai pengecekan'
-]);
+        $pengembalian->update(['status' => 'selesai pengecekan']);
 
-
-        // // 4️⃣ Update tabel pengembalian
-        // $pengembalian->update([
-        //     'staff_id' => $staff?->id,
-        //     'status_pembayaran_denda' => $request->payment_status,
-        //     'metode_pembayaran' => $request->payment_method,
-        //     'status' => 'Selesai'
-        // ]);
-
-        return redirect()->route('staff.dashboard')
-            ->with('success', "Pengecekan pengembalian $kode_pengembalian selesai diproses.");
+        return redirect()->route('staff.dashboard')->with('success', 'Pengecekan berhasil diselesaikan.');
     }
 
-   public function detail($kode_pengembalian)
-{
-    // Ambil data pengembalian lengkap dengan relasi
-    $pengembalian = Pengembalian::with([
-        'peminjaman',
-        'peminjaman.user',
-        'peminjaman.mobil',
-        'fines',
-        'damageReports'
-    ])
-    ->where('kode_pengembalian', $kode_pengembalian)
-    ->firstOrFail();
+    public function detail($kode_pengembalian)
+    {
+        $pengembalian = Pengembalian::with(['peminjaman.user', 'peminjaman.mobil', 'fines', 'damageReports', 'inspections'])
+            ->where('kode_pengembalian', $kode_pengembalian)
+            ->firstOrFail();
 
-    // Hitung keterlambatan
-    $due = Carbon::parse($pengembalian->peminjaman->tanggal_kembali);
-    $returned = Carbon::parse($pengembalian->tanggal_pengembalian ?? now());
+        $mobil = $pengembalian->peminjaman->mobil;
+        $infoMobil = $mobil ? "{$mobil->merek} {$mobil->tipe} ({$mobil->id})" : "Plat: " . ($pengembalian->peminjaman->mobil_id ?? 'N/A');
+        
+        $dueDateTime = Carbon::parse($pengembalian->peminjaman->tanggal_kembali . ' ' . $pengembalian->peminjaman->jam_sewa);
+        $returnedDateTime = Carbon::parse($pengembalian->tanggal_pengembalian);
+        
+        $jamTerlambat = max(0, $dueDateTime->diffInHours($returnedDateTime, false));
+        $totalFines = $pengembalian->fines->sum('total_denda');
+        $lateFine = $pengembalian->fines->sum('denda_keterlambatan');
+        $hargaPerHari = $mobil->harga ?? 0;
 
-    $lateDays = max(0, $due->diffInDays($returned, false));
-    $dendaKeterlambatan = $lateDays * 50000; // atur sesuai kebutuhan
-
-    // Hitung total denda awal dari fines + damageReports sebelumnya
-    $totalFines = $pengembalian->fines->sum('jumlah_denda');
-    $totalDamageCost = $pengembalian->damageReports->sum('damage_cost');
-
-    $totalDendaAwal = $totalFines + $totalDamageCost;
-
-    return view('staff.pengecekan.detail', compact(
-        'pengembalian',
-        'lateDays',
-        'dendaKeterlambatan',
-        'totalDendaAwal'
-    ));
-}
-
-
+        return view('staff.pengecekan.history_detail', compact(
+            'pengembalian', 'totalFines', 'jamTerlambat', 'lateFine', 'hargaPerHari', 'infoMobil'
+        ));
+    }
 }

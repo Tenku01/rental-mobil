@@ -7,6 +7,7 @@ use App\Models\Peminjaman;
 use App\Models\Pelanggan;
 use App\Models\PembatalanPesanan;
 use App\Models\Mobil;
+use Illuminate\Support\Facades\DB;
 
 class DashboardController extends Controller
 {
@@ -14,13 +15,26 @@ class DashboardController extends Controller
     {
         return view('resepsionis.dashboard', [
             'title' => 'Dashboard Resepsionis',
-             'totalMobil' => Mobil::count(),
+            
+            // Statistik Utama
+            'totalMobil' => Mobil::count(),
             'totalPelanggan' => Pelanggan::count(),
             'totalPeminjaman' => Peminjaman::count(),
+            
+            // Status Peminjaman
             'peminjamanBerlangsung' => Peminjaman::where('status', 'berlangsung')->count(),
-             'peminjamanSelesai' => Peminjaman::where('status', 'selesai')->count(),
+            'peminjamanSelesai' => Peminjaman::where('status', 'selesai')->count(),
+            'peminjamanBaru' => Peminjaman::where('status', 'menunggu pembayaran')->count(),
+            
+            // Pembatalan & Verifikasi (Optional jika ada modelnya)
             'totalPembatalan' => PembatalanPesanan::count(),
-       
+            'pendingPembatalan' => PembatalanPesanan::where('approval_status', 'pending')->count(),
+
+            // Data Tabel Terbaru (Limit 5)
+            'recentPeminjaman' => Peminjaman::with(['user', 'mobil'])
+                ->latest()
+                ->limit(5)
+                ->get()
         ]);
     }
 }

@@ -18,52 +18,69 @@ use App\Jobs\AssignDriver;
 
 class PeminjamanController extends Controller
 {
-     public function checkDriver(Request $request)
+    public function checkDriver(Request $request)
     {
-        // Validasi input
+        // 1. Validasi Input
         if (!$request->has('tanggal_sewa') || !$request->has('tanggal_kembali')) {
-            return response()->json(['available' => false, 'message' => 'Tanggal belum lengkap']);
+            return response()->json([
+                'available' => false, 
+                'message' => 'Tanggal input tidak ditemukan'
+            ]);
         }
 
         try {
-            // Konversi tanggal dari format d-m-Y (Frontend) ke Y-m-d (Database)
-            $start = Carbon::createFromFormat('d-m-Y', $request->tanggal_sewa)->format('Y-m-d');
-            $end   = Carbon::createFromFormat('d-m-Y', $request->tanggal_kembali)->format('Y-m-d');
+            // PERBAIKAN: Gunakan Carbon::parse agar lebih fleksibel (bisa baca Y-m-d atau d-m-Y)
+            // Ini mencegah error jika format dari frontend berbeda sedikit
+            $start = Carbon::parse($request->tanggal_sewa)->format('Y-m-d');
+            $end   = Carbon::parse($request->tanggal_kembali)->format('Y-m-d');
         } catch (\Exception $e) {
-            return response()->json(['available' => false, 'message' => 'Format tanggal salah'], 400);
+            return response()->json([
+                'available' => false, 
+                'message' => 'Format tanggal invalid: ' . $e->getMessage()
+            ], 400);
         }
 
-        // --- CORE LOGIC: Cek Jadwal Bentrok ---
-        // 1. Cari ID sopir yang sedang sibuk (booking aktif) di rentang tanggal tersebut
-        $bookedSopirIds = Peminjaman::whereNotNull('sopir_id')
-            ->whereIn('status', [
-                'menunggu pembayaran',
-                'pembayaran dp',
-                'sudah dibayar lunas',
-                'berlangsung'
-            ])
-            // Logika overlap tanggal: (StartA <= EndB) dan (EndA >= StartB)
+        // 2. Cari ID Sopir yang SIBUK (BENTROK)
+        $bookedQuery = Peminjaman::whereNotNull('sopir_id')
+            ->whereIn('status', ['menunggu pembayaran', 'pembayaran dp', 'sudah dibayar lunas', 'berlangsung'])
             ->where(function ($query) use ($start, $end) {
                 $query->where('tanggal_sewa', '<=', $end)
                       ->where('tanggal_kembali', '>=', $start);
-            })
-            ->pluck('sopir_id')
-            ->toArray();
+            });
+            
+        $bookedSopirIds = $bookedQuery->pluck('sopir_id')->toArray();
 
-        // 2. Hitung Sopir yang Memenuhi Syarat
-        // Syarat User:
-        // - Status 'tersedia' -> Bisa (asal ga bentrok)
-        // - Status 'bekerja'  -> Bisa (tapi CEK TANGGAL)
-        // - Status 'tidak tersedia' (misal cuti/sakit) -> GABISA
+        // 3. Query Sopir Tersedia
+        $sopirQuery = Sopir::query();
+
+        // Filter Status: Ambil yang 'tersedia' atau 'bekerja'
+        $sopirQuery->whereIn('status', ['tersedia', 'bekerja']);
+
+        // Filter Bentrok: Exclude sopir yang ID-nya ada di bookedSopirIds
+        if (!empty($bookedSopirIds)) {
+            $sopirQuery->whereNotIn('id', $bookedSopirIds);
+        }
+
+        $availableSopirCount = $sopirQuery->count();
         
-        $availableSopirCount = Sopir::whereIn('status', ['tersedia', 'bekerja']) // Filter status yang diperbolehkan
-            ->whereNotIn('id', $bookedSopirIds) // Filter sopir yang jadwalnya bentrok
-            ->count();
+        // Cek Total Sopir Keseluruhan di Database (tanpa filter) untuk debug
+        $totalSopirDatabase = Sopir::count();
 
+        // 4. Return JSON dengan Info DEBUG
         return response()->json([
             'available'     => $availableSopirCount > 0,
             'sisa_sopir'    => $availableSopirCount,
-            'message'       => $availableSopirCount > 0 ? 'Sopir tersedia' : 'Maaf, sopir penuh atau tidak tersedia pada tanggal ini'
+            'message'       => $availableSopirCount > 0 ? 'Sopir tersedia' : 'Sopir penuh',
+            
+            // --- INFO DEBUG (Akan muncul di Inspect Element > Network) ---
+            'debug' => [
+                'input_tanggal_sewa' => $request->tanggal_sewa,
+                'parsed_start'       => $start,
+                'parsed_end'         => $end,
+                'ids_sopir_sibuk'    => $bookedSopirIds,
+                'total_sopir_di_db'  => $totalSopirDatabase, // Harus > 0 (di SQL anda ada 2)
+                'logic_status'       => "Mencari status IN ('tersedia', 'bekerja')",
+            ]
         ]);
     }
 
@@ -204,7 +221,7 @@ public function store(Request $request)
             'jam_sewa' => 'required',
             'tanggal_kembali' => 'required|string|different:tanggal_sewa',
             'add_on_sopir' => 'required|boolean',
-            'metode_pembayaran' => 'nullable|string',
+            'metode_pembayaran' => 'nullable|string', // Pastikan ini ada
             'tipe_pembayaran' => 'required|in:dp,lunas',
             'dp' => 'nullable|numeric',
         ]);
@@ -227,11 +244,17 @@ public function store(Request $request)
                 ->pluck('sopir_id')
                 ->toArray();
 
-            // 2. Pilih sopir yang statusnya 'tersedia' ATAU 'bekerja'
-            // DAN ID-nya tidak ada di list bentrok
-            $sopir = Sopir::whereIn('status', ['tersedia', 'bekerja'])
-                ->whereNotIn('id', $sopirBentrokIds)
-                ->first(); // Bisa tambahkan ->inRandomOrder() jika mau acak
+            // 2. Pilih Sopir Hybrid
+            $sopir = Sopir::where(function($query) use ($sopirBentrokIds) {
+                    $query->where('status', 'tersedia')
+                          ->orWhere(function($subQuery) use ($sopirBentrokIds) {
+                              $subQuery->whereIn('status', ['bekerja', 'disewa'])
+                                       ->whereNotIn('id', $sopirBentrokIds);
+                          });
+                })
+                ->where('status', '!=', 'tidak aktif')
+                ->inRandomOrder()
+                ->first();
 
             if (!$sopir) {
                 return response()->json(['error' => 'Maaf, sopir penuh atau tidak tersedia pada tanggal tersebut.'], 422);
@@ -259,7 +282,8 @@ public function store(Request $request)
         $lama = max($lama, 1);
 
         $biayaSewa = $lama * $mobil->harga;
-        $biayaSopir = $request->add_on_sopir ? 150000 * $lama : 0;
+        // Koreksi harga sopir sesuai frontend (sebelumnya 1500, ubah ke 150000 agar sesuai standar)
+        $biayaSopir = $request->add_on_sopir ? 150000 * $lama : 0; 
         $total = $biayaSewa + $biayaSopir;
 
         // Payment Logic
@@ -276,6 +300,7 @@ public function store(Request $request)
         }
 
         // Create Peminjaman
+        // Status default adalah 'menunggu pembayaran'
         $peminjaman = Peminjaman::create([
             'user_id' => Auth::id(),
             'mobil_id' => $mobil->id,
@@ -288,14 +313,28 @@ public function store(Request $request)
             'dp_dibayarkan' => $dp,
             'sisa_bayar' => $sisa,
             'total_dibayarkan' => $jumlahBayar,
-            'status' => 'menunggu pembayaran',
+            'status' => 'menunggu pembayaran', 
             'tipe_pembayaran' => $tipeTransaksi,
             'metode_pembayaran' => $request->metode_pembayaran ?? 'transfer',
         ]);
 
         $mobil->update(['status' => 'disewa']);
 
-        // Midtrans Logic
+        // --- BRANCHING: CASH VS MIDTRANS ---
+        
+        // Jika metode pembayaran adalah CASH (Bayar di Tempat)
+        if ($request->metode_pembayaran === 'cash') {
+            // Kita tidak perlu membuat Snap Token.
+            // Langsung return success agar frontend bisa redirect.
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Pesanan berhasil dibuat. Silakan lakukan pembayaran di tempat.',
+                'redirect_url' => route('user.pesanan.pesanan'), // Redirect ke halaman list pesanan
+                'peminjaman_id' => $peminjaman->id
+            ]);
+        }
+
+        // Jika metode pembayaran adalah TRANSFER (Midtrans)
         try {
             Config::$serverKey = config('services.midtrans.server_key');
             Config::$isProduction = config('services.midtrans.is_production');
@@ -335,24 +374,23 @@ public function store(Request $request)
     public function cancel($id)
     {
         $peminjaman = Peminjaman::find($id);
-    
+
         if (!$peminjaman) {
             return response()->json(['error' => 'Data peminjaman tidak ditemukan'], 404);
         }
-    
-        // 🔹 Hapus transaksi Midtrans yang pending
-        PaymentTransaction::where('peminjaman_id', $peminjaman->id)
-            ->where('status', 'pending')
-            ->delete();
-    
-        // 🔹 Ubah status mobil jadi tersedia lagi
+
+        // 1. Hapus transaksi Midtrans terkait (Bersihkan PaymentTransaction)
+        // Kita hapus semua transaksi milik peminjaman ini agar tidak ada duplikasi/sampah
+        PaymentTransaction::where('peminjaman_id', $peminjaman->id)->delete();
+
+        // 2. Ubah status mobil jadi tersedia lagi
         if ($peminjaman->mobil) {
             $peminjaman->mobil->update(['status' => 'tersedia']);
         }
-    
-        // 🔹 Hapus data peminjaman
+
+        // 3. Hapus data peminjaman utama
         $peminjaman->delete();
-    
+
         return response()->json(['message' => 'Peminjaman dibatalkan dan data dihapus']);
     }
     

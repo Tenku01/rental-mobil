@@ -10,58 +10,69 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
+use Carbon\Carbon;
 
 class LogbookController extends Controller
 {
     /**
-     * Menampilkan dashboard tugas aktif sopir.
-     * Tugas didefinisikan sebagai Peminjaman yang statusnya 'berlangsung' dan ditugaskan kepada sopir ini.
+     * Menampilkan daftar tugas aktif sopir untuk logbook.
      */
     public function index()
     {
-        // Mendapatkan instance Sopir yang sedang login
+        // Set locale Carbon ke Bahasa Indonesia agar diffForHumans() otomatis berbahasa Indonesia
+        Carbon::setLocale('id');
+
         $sopir = Sopir::where('user_id', Auth::id())->firstOrFail();
         
-        // Ambil peminjaman yang ditugaskan dan statusnya 'berlangsung'
         $tasks = Peminjaman::with('mobil', 'user.pelanggan')
             ->where('sopir_id', $sopir->id)
             ->where('status', 'berlangsung')
-            ->get();
+            ->orderBy('created_at', 'desc')
+            ->paginate(10);
 
-        // Cek status logbook harian untuk setiap tugas
+        // Mengambil data logbook terakhir hari ini untuk setiap tugas untuk info status "Real Time"
         $tasks->each(function ($peminjaman) {
-            $peminjaman->logbook_hari_ini = DriverLogbook::where('peminjaman_id', $peminjaman->id)
+            $peminjaman->latest_logbook = DriverLogbook::where('peminjaman_id', $peminjaman->id)
                 ->whereDate('tanggal_aktivitas', now()->toDateString())
-                ->exists();
+                ->orderBy('waktu_log', 'desc')
+                ->first();
         });
 
-        // Tampilkan view dashboard sopir
-        return view('sopir.dashboard', compact('tasks'));
+        return view('sopir.logbook_index', compact('tasks'));
     }
 
     /**
-     * Menampilkan formulir Logbook atau riwayat Logbook untuk peminjaman tertentu.
+     * Menampilkan formulir Logbook untuk peminjaman tertentu.
      */
     public function show(Peminjaman $peminjaman)
     {
-        // Memastikan sopir yang login berhak mengakses tugas ini
+        // Set locale Carbon ke Bahasa Indonesia
+        Carbon::setLocale('id');
+
         $sopir = Sopir::where('user_id', Auth::id())->firstOrFail();
+        
         if ($peminjaman->sopir_id !== $sopir->id) {
             abort(403, 'Anda tidak ditugaskan pada peminjaman ini.');
         }
         
-        // Redirect jika tugas sudah selesai
         if ($peminjaman->status === 'selesai') {
-             return redirect()->route('sopir.dashboard')->with('error', 'Tugas ini sudah selesai.');
+            return redirect()->route('sopir.logbook.index')
+                ->with('error', 'Tugas ini sudah selesai.');
         }
 
-        // Ambil riwayat logbook
+        // Ambil riwayat logbook menggunakan pagination
         $logbooks = DriverLogbook::where('peminjaman_id', $peminjaman->id)
             ->orderBy('tanggal_aktivitas', 'desc')
-            ->get();
+            ->orderBy('waktu_log', 'desc')
+            ->paginate(10);
 
-        // Tampilkan view formulir logbook
-        return view('sopir.logbook_form', compact('peminjaman', 'logbooks'));
+        // Ambil logbook terakhir hari ini untuk informasi status di form
+        $logbook_hari_ini = DriverLogbook::where('peminjaman_id', $peminjaman->id)
+            ->whereDate('tanggal_aktivitas', now()->toDateString())
+            ->orderBy('waktu_log', 'desc')
+            ->first();
+
+        return view('sopir.logbook_form', compact('peminjaman', 'logbooks', 'logbook_hari_ini'));
     }
 
     /**
@@ -70,53 +81,83 @@ class LogbookController extends Controller
     public function store(Request $request, Peminjaman $peminjaman)
     {
         $request->validate([
-            'deskripsi_aktivitas' => 'required|string',
-            'status_log' => ['required', Rule::in(['mulai_kerja', 'dalam_perjalanan', 'selesai_hari_ini', 'selesai_peminjaman'])],
-            'foto_bukti' => 'nullable|image|max:2048', // Batas 2MB
+            'deskripsi_aktivitas' => 'required|string|min:10|max:500',
+            'status_log' => ['required', Rule::in([
+                'mulai_kerja', 
+                'dalam_perjalanan', 
+                'selesai_hari_ini', 
+                'selesai_peminjaman'
+            ])],
+            'foto_bukti' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
         ]);
 
-        // Gunakan transaksi database untuk operasi ganda (insert & update)
-        DB::transaction(function () use ($request, $peminjaman) {
-            $sopir = Sopir::where('user_id', Auth::id())->firstOrFail();
-            
-            // Verifikasi otorisasi dan status peminjaman
-            if ($peminjaman->sopir_id !== $sopir->id) {
-                return redirect()->back()->with('error', 'Akses ditolak.');
-            }
-            if ($peminjaman->status !== 'berlangsung') {
-                return redirect()->back()->with('error', 'Peminjaman tidak dalam status berlangsung.');
-            }
+        $sopir = Sopir::where('user_id', Auth::id())->firstOrFail();
+        
+        if ($peminjaman->sopir_id !== $sopir->id) {
+            return redirect()->back()->with('error', 'Akses ditolak.');
+        }
 
+        return DB::transaction(function () use ($request, $peminjaman, $sopir) {
             $fotoPath = null;
             if ($request->hasFile('foto_bukti')) {
-                // Simpan foto bukti di storage publik
                 $fotoPath = $request->file('foto_bukti')->store('logbook_photos', 'public');
             }
 
-            // 1. INSERT entri Logbook
+            // Simpan logbook dengan waktu_log saat ini
             DriverLogbook::create([
                 'peminjaman_id' => $peminjaman->id,
-                'tanggal_aktivitas' => now()->toDateString(), 
-                'deskripsi_aktivitas' => $request->deskripsi_aktivitas,
+                'tanggal_aktivitas' => now()->toDateString(),
+                'waktu_log' => now(), 
+                'deskripsi_aktivitas' => strip_tags($request->deskripsi_aktivitas),
                 'status_log' => $request->status_log,
                 'foto_bukti' => $fotoPath,
             ]);
-            
-            // 2. Logika Penyelesaian Tugas
+
+            // Logika update status sopir dan peminjaman
             if ($request->status_log === 'selesai_peminjaman') {
-                // Tandai peminjaman sebagai 'selesai'
-                $peminjaman->status = 'selesai'; 
-                $peminjaman->save();
-
-                // Kembalikan status sopir menjadi 'tersedia'
-                $sopir->status = 'tersedia';
-                $sopir->save();
-
-                return redirect()->route('sopir.dashboard')->with('success', 'Tugas peminjaman berhasil diselesaikan. Status Anda kini tersedia.');
+                $peminjaman->update(['status' => 'selesai', 'tanggal_selesai' => now()]);
+                $sopir->update(['status' => 'tersedia']);
+                
+                return redirect()->route('sopir.dashboard')
+                    ->with('success', 'Tugas selesai! Status Anda kembali tersedia.');
             }
-        });
 
-        // Redirect ke halaman logbook setelah entri harian
-        return redirect()->route('sopir.logbook.show', $peminjaman)->with('success', 'Logbook harian berhasil disimpan.');
+            if ($request->status_log === 'mulai_kerja') {
+                $sopir->update(['status' => 'bekerja']);
+            }
+
+            if ($request->status_log === 'selesai_hari_ini') {
+                $sopir->update(['status' => 'tersedia']);
+            }
+
+            return redirect()->route('sopir.logbook.show', $peminjaman)
+                ->with('success', 'Aktivitas berhasil dicatat!');
+        });
+    }
+
+    /**
+     * Menampilkan riwayat logbook sopir secara keseluruhan.
+     */
+    public function history(Request $request)
+    {
+        // Set locale Carbon ke Bahasa Indonesia
+        Carbon::setLocale('id');
+
+        $sopir = Sopir::where('user_id', Auth::id())->firstOrFail();
+        
+        $query = DriverLogbook::with('peminjaman.mobil')
+            ->whereHas('peminjaman', function ($q) use ($sopir) {
+                $q->where('sopir_id', $sopir->id);
+            });
+            
+        if ($request->filled('tanggal')) {
+            $query->whereDate('tanggal_aktivitas', $request->tanggal);
+        }
+        
+        $logbooks = $query->orderBy('tanggal_aktivitas', 'desc')
+            ->orderBy('waktu_log', 'desc')
+            ->paginate(15);
+            
+        return view('sopir.logbook_history', compact('logbooks'));
     }
 }

@@ -32,9 +32,6 @@ class UserController extends Controller
         return view('resepsionis.user.create');
     }
 
-    /**
-     * Simpan data pelanggan baru.
-     */
     public function store(Request $request)
     {
         $request->validate([

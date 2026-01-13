@@ -20,6 +20,7 @@
                 @php
                     $tabs = [
                         'semua' => 'Semua Pesanan',
+                        'menunggu pembayaran' => 'Menunggu Pembayaran',
                         'pembayaran dp' => 'Belum Lunas',
                         'sudah dibayar lunas' => 'Belum Diambil',
                         'berlangsung' => 'Berlangsung',

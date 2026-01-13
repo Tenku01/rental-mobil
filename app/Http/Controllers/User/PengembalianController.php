@@ -6,115 +6,90 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\Peminjaman;
 use App\Models\Pengembalian;
-use App\Models\Fine;
 use App\Models\PaymentTransaction;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Str;
 
 class PengembalianController extends Controller
 {
     /**
      * 🔹 User klik tombol "Selesaikan Peminjaman"
-     * Updated: Hanya membuat record pengembalian, perhitungan denda dilakukan oleh Staff.
+     * Membuat record pengembalian dengan kode unik.
      */
-     public function store(Request $request, $peminjaman_id)
+    public function store(Request $request, $peminjaman_id)
     {
-        // Ambil data peminjaman beserta relasi mobilnya
         $peminjaman = Peminjaman::with('mobil')->findOrFail($peminjaman_id);
 
-        // Cek apakah sudah ada pengembalian
+        // Cegah duplikasi pengembalian untuk satu transaksi peminjaman yang sama
         $existingPengembalian = Pengembalian::where('peminjaman_id', $peminjaman->id)->first();
         if ($existingPengembalian) {
             return redirect()->back()->with('warning', 'Permintaan pengembalian sudah dibuat sebelumnya.');
         }
 
         /**
-         * GENERATE KODE: RET-(plat mobil)
-         * Kita ambil plat nomor dari kolom mobil_id di tabel peminjaman (sesuai data Anda sebelumnya)
-         * Kita gunakan Str::upper dan str_replace untuk merapikan formatnya (menghapus spasi)
+         * 🔹 Generate kode pengembalian unik
+         * Format: RET-PLATNOMOR-IDPEMINJAMAN
+         * Contoh: RET-AB1111Y-104
+         * Penambahan ID peminjaman menjamin kode unik meskipun mobilnya sama.
          */
-            $platNomor = str_replace(' ', '', $peminjaman->mobil_id); // 'AB 1111 Y' -> 'AB1111Y'
-            $kodePengembalian = 'RET-' . strtoupper($platNomor);
+        $platNomor = str_replace(' ', '', $peminjaman->mobil_id);
+        $kodePengembalian = 'RET-' . strtoupper($platNomor) . '-' . $peminjaman->id;
 
-        // 1. Buat record Pengembalian
+        // Simpan pengembalian
         Pengembalian::create([
-            'kode_pengembalian' => $kodePengembalian,
-            'peminjaman_id' => $peminjaman->id,
-            'tanggal_pengembalian' => Carbon::now(),
-            'status' => 'menunggu pengecekan',
+            'kode_pengembalian'   => $kodePengembalian,
+            'peminjaman_id'       => $peminjaman->id,
+            'tanggal_pengembalian'=> Carbon::now(),
+            'status'              => 'menunggu pengecekan',
         ]);
 
-        // 2. Update status peminjaman
+        // Update status peminjaman menjadi selesai agar tidak muncul di daftar aktif user
         $peminjaman->update(['status' => 'selesai']);
-        
+
+        // Update status mobil agar segera dibersihkan oleh tim operasional
         if ($peminjaman->mobil) {
             $peminjaman->mobil->update(['status' => 'dibersihkan']);
         }
 
-        return redirect()->back()->with('success', 'Mobil berhasil dikembalikan. Mohon tunggu pengecekan oleh staff untuk kalkulasi denda (jika ada).');
+        return redirect()->back()->with(
+            'success',
+            'Mobil berhasil dikembalikan. Mohon tunggu pengecekan fisik oleh staff kami.'
+        );
     }
 
     /**
-     * 🔹 Staff melakukan pengecekan kendaraan
-     * NOTE: Logic pengecekan utama sekarang ada di StaffDashboardController.
-     * Fungsi ini mungkin legacy/tidak digunakan jika user tidak punya akses staff.
+     * 🔹 Legacy - pengecekan dipindahkan ke modul Staff
      */
     public function pengecekan(Request $request, $id)
     {
-        $request->validate([
-            'status_pemeriksaan' => 'required|in:baik,rusak',
-            'denda_kerusakan' => 'nullable|numeric|min:0',
-            'catatan' => 'nullable|string',
-        ]);
-
-        $pengembalian = Pengembalian::findOrFail($id);
-
-        $dendaKerusakan = $request->status_pemeriksaan === 'rusak'
-            ? ($request->denda_kerusakan ?? 0)
-            : 0;
-
-        // Note: Field total_denda dkk mungkin error jika kolomnya tidak ada di tabel pengembalian
-        // karena sekarang pindah ke tabel fines. Pastikan menyesuaikan jika fungsi ini masih dipakai.
-        $totalDenda = ($pengembalian->denda_keterlambatan ?? 0) + $dendaKerusakan;
-        $hasilPengecekan = $totalDenda > 0 ? 'ada_denda' : 'tidak_ada_denda';
-
-        $pengembalian->update([
-            'denda_kerusakan' => $dendaKerusakan,
-            'total_denda' => $totalDenda,
-            'hasil_pengecekan' => $hasilPengecekan,
-            'status_pemeriksaan' => $request->status_pemeriksaan,
-            'catatan' => $request->catatan,
-        ]);
-
-        return redirect()->back()->with('success', 'Pengecekan kendaraan telah diperbarui.');
+        return redirect()->back()->with(
+            'warning',
+            'Pengecekan kendaraan dikelola oleh Staff dan tidak diproses di modul ini.'
+        );
     }
 
     /**
-     * 🔹 User membayar denda (tunai / transfer)
+     * 🔹 Legacy - pembayaran denda tidak ditangani di tabel pengembalian
      */
     public function bayarDenda(Request $request, $id)
     {
-        $request->validate([
-            'metode_pembayaran' => 'required|in:transfer,tunai',
-        ]);
-
-        $pengembalian = Pengembalian::findOrFail($id);
-
-        $pengembalian->update([
-            'status_pembayaran_denda' => 'dibayar',
-            'metode_pembayaran' => $request->metode_pembayaran,
-        ]);
-
-        return redirect()->back()->with('success', 'Pembayaran denda berhasil dicatat.');
+        return redirect()->back()->with(
+            'warning',
+            'Pembayaran denda dikelola melalui modul transaksi.'
+        );
     }
 
+    /**
+     * 🔹 Generate Snap Token Midtrans (SIMULASI)
+     */
     public function generateSnapToken($kode_pengembalian)
     {
-        $pengembalian = Pengembalian::with('peminjaman.user')->where('kode_pengembalian', $kode_pengembalian)->firstOrFail();
-        
-        // Pastikan Model Pengembalian punya accessor/relasi ke tabel Fines untuk mengambil total denda
-        $totalDenda = $pengembalian->total_outstanding_fine ?? 0; 
+        $pengembalian = Pengembalian::with('peminjaman.user')
+            ->where('kode_pengembalian', $kode_pengembalian)
+            ->firstOrFail();
+
+        // Total denda diambil dari relasi denda (fines)
+        $totalDenda = $pengembalian->total_outstanding_fine ?? 0;
 
         if ($totalDenda <= 0) {
             return response()->json(['error' => 'Tidak ada denda yang perlu dibayar.'], 400);
@@ -124,9 +99,9 @@ class PengembalianController extends Controller
             return response()->json(['error' => 'Akses ditolak.'], 403);
         }
 
-        // Buat order ID & record transaksi
         $orderId = 'DND-' . $pengembalian->kode_pengembalian . '-' . time();
 
+        // Buat record transaksi pembayaran denda
         PaymentTransaction::create([
             'peminjaman_id' => $pengembalian->peminjaman_id,
             'midtrans_transaction_id' => $orderId,
@@ -135,24 +110,29 @@ class PengembalianController extends Controller
             'tipe_transaksi' => 'denda',
         ]);
 
-        // SNAP token dummy (simulasi)
-        $snapToken = 'simulasi-' . $orderId . '-token';
-
+        // Update status pengembalian sementara menunggu pembayaran
         $pengembalian->update([
             'status' => 'menunggu_pembayaran_midtrans',
-            'metode_pembayaran' => 'midtrans',
         ]);
+
+        // Token simulasi untuk pengujian frontend
+        $snapToken = 'simulasi-' . $orderId . '-token';
 
         return response()->json(['snap_token' => $snapToken]);
     }
 
-     public function selectManualPaymentMethod(Request $request, $kode_pengembalian)
+    /**
+     * 🔹 User memilih metode pembayaran manual (Transfer/Tunai)
+     */
+    public function selectManualPaymentMethod(Request $request, $kode_pengembalian)
     {
         $request->validate([
             'metode_pembayaran' => 'required|in:transfer,tunai',
         ]);
 
-        $pengembalian = Pengembalian::where('kode_pengembalian', $kode_pengembalian)->firstOrFail();
+        $pengembalian = Pengembalian::with('peminjaman')
+            ->where('kode_pengembalian', $kode_pengembalian)
+            ->firstOrFail();
 
         if (Auth::id() !== $pengembalian->peminjaman->user_id) {
             return response()->json(['error' => 'Akses ditolak.'], 403);
@@ -160,21 +140,22 @@ class PengembalianController extends Controller
 
         $totalDenda = $pengembalian->total_outstanding_fine ?? 0;
 
-        if ($totalDenda <= 0 || 
-            $pengembalian->status_pembayaran_denda === 'dibayar') 
-        {
-            return redirect()->back()->with('error', 'Tidak ada denda yang perlu dibayar atau sudah lunas.');
+        if ($totalDenda <= 0) {
+            return redirect()->back()->with('error', 'Tidak ada denda yang perlu dibayar.');
         }
 
         $newStatus = $request->metode_pembayaran === 'tunai'
             ? 'menunggu_pembayaran_tunai'
             : 'menunggu_verifikasi_transfer';
 
+        // Update status pengembalian sesuai pilihan metode
         $pengembalian->update([
             'status' => $newStatus,
-            'metode_pembayaran' => $request->metode_pembayaran,
         ]);
 
-        return redirect()->back()->with('success', 'Pilihan pembayaran dicatat. Menunggu konfirmasi dari Staff.');
+        return redirect()->back()->with(
+            'success',
+            'Pilihan pembayaran berhasil dicatat. Mohon segera selesaikan pembayaran dan tunggu konfirmasi staff.'
+        );
     }
 }

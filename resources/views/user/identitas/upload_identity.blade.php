@@ -17,7 +17,7 @@
                 <div class="mb-6 bg-emerald-50 border border-emerald-300 text-emerald-700 px-4 py-3 rounded-xl shadow-md flex items-center">
                     <svg class="w-6 h-6 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                     <div>
-                        ✅ **Identitas Anda telah disetujui.** Anda siap untuk melakukan pemesanan mobil.
+                        ✅ Identitas Anda telah disetujui. Anda siap untuk melakukan pemesanan mobil.
                         <p class="text-xs text-emerald-600 mt-1">Status ini berlaku sejak: {{ \Carbon\Carbon::parse($userIdentification->updated_at)->format('d M Y') }}</p>
                     </div>
                 </div>
@@ -25,7 +25,7 @@
                 <div class="mb-6 bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded-xl shadow-md flex items-center">
                     <svg class="w-6 h-6 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                     <div>
-                        ❌ **Identitas Anda ditolak.** Silakan periksa kembali file Anda (pastikan jelas dan tidak buram) dan unggah ulang untuk diverifikasi.
+                        ❌ Identitas Anda ditolak. Silakan periksa kembali file Anda (pastikan jelas dan tidak buram) dan unggah ulang untuk diverifikasi.
                         @if ($userIdentification->alasan_penolakan)
                             <p class="text-sm font-semibold mt-1">Alasan: {{ $userIdentification->alasan_penolakan }}</p>
                         @endif
@@ -35,7 +35,7 @@
                 <div class="mb-6 bg-yellow-50 border border-yellow-300 text-yellow-800 px-4 py-3 rounded-xl shadow-md flex items-center">
                     <svg class="w-6 h-6 mr-3 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707"></path></svg>
                     <div>
-                        ⏳ **Identitas Anda sedang menunggu verifikasi.** Verifikasi biasanya memakan waktu 1x24 jam.
+                        ⏳ Identitas Anda sedang menunggu verifikasi. Verifikasi biasanya memakan waktu 1x24 jam.
                     </div>
                 </div>
             @endif

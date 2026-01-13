@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\Resepsionis;
 use App\Livewire\admin\HomeIndex;
 use App\Livewire\admin\RoleIndex;
 use App\Livewire\admin\UserIndex;
@@ -10,8 +11,13 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
 use App\Livewire\admin\PeminjamanIndex;
 use App\Livewire\admin\ResepsionisIndex;
+use App\Livewire\admin\PengembalianIndex;
+use App\Livewire\admin\DriverLogbookIndex;
+use App\Livewire\admin\VehicleDamageIndex;
 use App\Http\Controllers\LandingController;
 use App\Livewire\admin\VerifikasiUserIndex;
+use App\Livewire\admin\PembatalanPesananIndex;
+use App\Livewire\admin\VehicleInspectionIndex;
 use App\Http\Controllers\Sopir\LogbookController;
 use App\Http\Controllers\User\IdentityController;
 use App\Http\Controllers\User\MidtransController;
@@ -26,14 +32,14 @@ use App\Http\Controllers\Staff\StaffDashboardController;
 use App\Http\Controllers\Resepsionis\DashboardController;
 use App\Http\Controllers\Resepsionis\PelangganController;
 use App\Http\Controllers\User\PembatalanPesananController;
+use App\Http\Controllers\Resepsionis\TransactionController;
 use App\Http\Controllers\Resepsionis\VerificationController;
 use App\Http\Controllers\Admin\PembatalanPesananApprovalController;
 use App\Http\Controllers\Resepsionis\MobilController as ResepsionisMobilController;
 use App\Http\Controllers\Resepsionis\MidtransController as ResepsionisMidtransController;
 use App\Http\Controllers\Resepsionis\PeminjamanController as ResepsionisPeminjamanController;
-use App\Http\Controllers\Resepsionis\PembatalanPesananController as ResepsionisPembatalanPesananController;
 use App\Http\Controllers\Resepsionis\PengembalianController as ResepsionisPengembalianController;
-use App\Models\Resepsionis;
+use App\Http\Controllers\Resepsionis\PembatalanPesananController as ResepsionisPembatalanPesananController;
 
 // Landing page
 Route::get('/', [LandingController::class, 'index'])->name('landing');
@@ -96,9 +102,9 @@ Route::middleware(['auth'])->group(function () {
     Route::post('/peminjaman/{peminjaman}/cancel', [PembatalanPesananController::class, 'store'])
         ->name('pembatalan.store');
 
-        Route::post('/peminjaman/{peminjaman_id}/kembalikan', [PengembalianController::class, 'store'])
+    Route::post('/peminjaman/{peminjaman_id}/kembalikan', [PengembalianController::class, 'store'])
         ->name('pengembalian.store');
-    
+
     // Melihat Status & Detail Pengembalian (Step 5-6)
     Route::get('/pengembalian/{kode_pengembalian}', [PengembalianController::class, 'show'])
         ->name('pengembalian.show');
@@ -110,7 +116,7 @@ Route::middleware(['auth'])->group(function () {
     // Memilih Metode Pembayaran Manual/Tunai (Step 7, Aksi Tunai/Transfer)
     Route::post('/pengembalian/{kode_pengembalian}/select-manual-payment', [PengembalianController::class, 'selectManualPaymentMethod'])
         ->name('pengembalian.selectManualPaymentMethod');
-    
+
     // // Route dari definisi lama Anda (jika masih diperlukan)
     // Route::post('/peminjaman/{peminjaman}/cancel', [PembatalanPesananController::class, 'store'])
     //     ->name('pembatalan.store');
@@ -131,7 +137,7 @@ Route::middleware(['auth', 'staff'])
     ->prefix('staff')
     ->name('staff.')
     ->group(function () {
-        
+
         // 🔹 Dashboard staff umum
         Route::get('/dashboard', [StaffDashboardController::class, 'dashboard'])
             ->name('dashboard');
@@ -139,48 +145,49 @@ Route::middleware(['auth', 'staff'])
         // 🔹 Profile staff
         Route::view('/profile', 'staff.profile')
             ->name('profile');
-        
+
         // --- Alur Pengecekan ---
-        
+
         // 🔹 1. Halaman utama pengecekan (Form Pencarian)
-       Route::get('/pengecekan', [StaffDashboardController::class, 'index'])
-    ->name('pengecekan.index');
-Route::get('/pengecekan/{kode_pengembalian}', [StaffDashboardController::class, 'cek'])
-    ->where('kode_pengembalian', '[A-Za-z0-9]+')
-    ->name('pengecekan.view');
+        Route::get('/pengecekan', [StaffDashboardController::class, 'index'])
+            ->name('pengecekan.index');
+        Route::get('/pengecekan/{kode_pengembalian}', [StaffDashboardController::class, 'cek'])
+            ->where('kode_pengembalian', '[A-Za-z0-9\-]+')
+            ->name('pengecekan.view');
 
 
         // 🔹 2. Aksi ketika tombol "Cek" disubmit (Menampilkan Detail)
         Route::post('/pengecekan/{kode_pengembalian}/cek', [StaffDashboardController::class, 'cek'])
-            ->where('kode_pengembalian', '[A-Za-z0-9]+')
+            ->where('kode_pengembalian', '[A-Za-z0-9\-]+')
             ->name('pengecekan.cek');
-            
+
         // 🔹 3. Aksi Finalisasi (Menyimpan semua hasil pengecekan)
         Route::post('/pengecekan/{kode_pengembalian}/finalisasi', [StaffDashboardController::class, 'finalisasiPengecekan'])
-            ->where('kode_pengembalian', '[A-Za-z0-9]+')
+            ->where('kode_pengembalian', '[A-Za-z0-9\-]+')
             ->name('pengecekan.finalisasi');
 
-            Route::get('/pengecekan/{kode_pengembalian}/detail', 
-    [StaffDashboardController::class, 'detail']
-)->name('pengecekan.detail');
+        Route::get(
+            '/pengecekan/{kode_pengembalian}/detail',
+            [StaffDashboardController::class, 'detail']
+        )->name('pengecekan.detail');
     });
 
-    
+
 Route::middleware(['auth', 'resepsionis'])
     ->prefix('resepsionis')
     ->name('resepsionis.')
     ->group(function () {
         Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
         Route::resource('pelanggan', PelangganController::class);
-        
+
         Route::resource('mobil', ResepsionisMobilController::class)->except(['destroy']);
 
         // Pelanggan edit/update rute (sudah spesifik)
         Route::get('/pelanggan/{pelanggan}/edit', [PelangganController::class, 'edit'])->name('pelanggan.edit');
         Route::put('/pelanggan/{pelanggan}', [PelangganController::class, 'update'])->name('pelanggan.update');
-        
+
         Route::resource('peminjaman', ResepsionisPeminjamanController::class);
-        
+
         // Peminjaman Show (Rute ini harusnya berada di resource peminjaman di atas)
         Route::get('/peminjaman/{id}', [PeminjamanController::class, 'show'])->name('peminjaman.show');
 
@@ -193,7 +200,7 @@ Route::middleware(['auth', 'resepsionis'])
             Route::get('/{id}', [ResepsionisPembatalanPesananController::class, 'show'])->name('show');
             Route::get('/{id}/edit', [ResepsionisPembatalanPesananController::class, 'edit'])->name('edit');
             Route::put('/{id}', [ResepsionisPembatalanPesananController::class, 'update'])->name('update');
-            
+
             // Aksi Spesifik (Approve & Reject)
             Route::post('/{id}/approve', [ResepsionisPembatalanPesananController::class, 'approve'])->name('approve');
             Route::post('/{id}/reject', [ResepsionisPembatalanPesananController::class, 'reject'])->name('reject');
@@ -201,71 +208,98 @@ Route::middleware(['auth', 'resepsionis'])
 
         // Rute refund manual oleh resepsionis
         Route::post('/midtrans/refund/{id}', [ResepsionisMidtransController::class, 'refund'])->name('midtrans.refund');
-    
-         Route::controller(VerificationController::class)->prefix('verifikasi')->name('verifikasi.')->group(function () {
+
+        Route::controller(VerificationController::class)->prefix('verifikasi')->name('verifikasi.')->group(function () {
             Route::get('/', 'index')->name('index');
             Route::get('/{id}', 'show')->name('show');
             Route::patch('/{id}/status', 'updateStatus')->name('updateStatus');
         });
 
-         // Rute CRUD khusus User Pelanggan
+        // Rute CRUD khusus User Pelanggan
         Route::resource('user', UserController::class);
 
-            // Rute Manajemen Denda
-    Route::get('/fine', [FineController::class, 'index'])->name('fine.index');
-    Route::patch('/fine/{id}/status', [FineController::class, 'updateStatus'])->name('fine.updateStatus');
+        // Rute Manajemen Denda
+        Route::get('/fine', [FineController::class, 'index'])->name('fine.index');
+        Route::patch('/fine/{id}/status', [FineController::class, 'updateStatus'])->name('fine.updateStatus');
 
-     // 6. Manajemen Pengembalian (CRUD)
+        // 6. Manajemen Pengembalian (CRUD)
         Route::resource('pengembalian', ResepsionisPengembalianController::class);
 
+        //monitoring Transaksi Pembayaran
+        Route::resource('transactions', TransactionController::class)->only(['index', 'show']);
     });
 
 Route::middleware(['auth', 'sopir'])
-    ->prefix('sopir') // Prefix URL: /sopir
-    ->name('sopir.') // Name Prefix: sopir.
+    ->prefix('sopir')
+    ->name('sopir.')
     ->group(function () {
 
-        // Rute Dashboard Utama
-        // Resulting URL: /sopir/dashboard
-        // Resulting Name: sopir.dashboard
+        // ==================== DASHBOARD & TUGAS ====================
         Route::get('/dashboard', [SopirDashboardController::class, 'dashboard'])
             ->name('dashboard');
 
-        // Rute Tugas Aktif
-        // Resulting URL: /sopir/tugas-aktif
-        // Resulting Name: sopir.activeTasks
         Route::get('/tugas-aktif', [SopirDashboardController::class, 'activeTasks'])
             ->name('activeTasks');
-            
-        // Rute Riwayat Kerja
-        // Resulting URL: /sopir/riwayat
-        // Resulting Name: sopir.history
+
         Route::get('/riwayat', [SopirDashboardController::class, 'history'])
             ->name('history');
-
-            // Rute Form/Riwayat Logbook
-        // Sopir mengklik tugas dan melihat riwayat/formulir logbook
-        // URL: /sopir/logbook/{peminjaman}
-        // Name: sopir.logbook.show
-        Route::get('/logbook/{peminjaman}', [LogbookController::class, 'show'])
-            ->name('logbook.show');
-            
-        // Rute Menyimpan Entri Logbook
-        // Sopir mengirimkan data logbook harian
-        // URL: /sopir/logbook/{peminjaman}
-        // Name: sopir.logbook.store
-        Route::post('/logbook/{peminjaman}', [LogbookController::class, 'store'])
-            ->name('logbook.store');
-
         // Rute Aksi (WRITE)
         Route::put('/status', [SopirActionController::class, 'updateStatus'])
-            ->name('updateStatus'); 
+            ->name('updateStatus');
         Route::post('/complete/{peminjaman}', [SopirActionController::class, 'completeTask'])
             ->name('completeTask');
-    });
-    
 
-Route::middleware(['auth', 'admin']) 
+        // ==================== LOGBOOK ====================
+        Route::prefix('logbook')->name('logbook.')->group(function () {
+            // Daftar tugas untuk logbook
+            Route::get('/', [LogbookController::class, 'index'])
+                ->name('index');
+
+            // Form logbook untuk tugas tertentu
+            Route::get('/{peminjaman}', [LogbookController::class, 'show'])
+                ->name('show')
+                ->where('peminjaman', '[0-9]+');
+
+            // Simpan logbook
+            Route::post('/{peminjaman}', [LogbookController::class, 'store'])
+                ->name('store')
+                ->where('peminjaman', '[0-9]+');
+        });
+
+        // ==================== AKTIVITAS SOPIR ====================
+        Route::prefix('actions')->name('actions.')->group(function () {
+            // Update status sopir
+            Route::put('/status', [SopirActionController::class, 'updateStatus'])
+                ->name('updateStatus');
+
+            // Selesaikan tugas (alternatif dari logbook)
+            Route::post('/complete/{peminjaman}', [SopirActionController::class, 'completeTask'])
+                ->name('completeTask')
+                ->where('peminjaman', '[0-9]+');
+
+            // Update lokasi sopir (jika diperlukan)
+            Route::post('/update-location', [SopirActionController::class, 'updateLocation'])
+                ->name('updateLocation');
+        });
+
+        // ==================== PROFILE SOPIR ====================
+        Route::prefix('profile')->name('profile.')->group(function () {
+            Route::get('/', [SopirDashboardController::class, 'profile'])
+                ->name('index');
+
+            Route::put('/update', [SopirDashboardController::class, 'updateProfile'])
+                ->name('update');
+        });
+
+        // ==================== NOTIFIKASI ====================
+        Route::get('/notifications', [SopirDashboardController::class, 'notifications'])
+            ->name('notifications');
+
+        Route::post('/notifications/mark-read', [SopirActionController::class, 'markNotificationsAsRead'])
+            ->name('notifications.markRead');
+    });
+
+Route::middleware(['auth', 'admin'])
     ->prefix('admin')
     ->name('admin.')
     ->group(function () {
@@ -297,4 +331,18 @@ Route::middleware(['auth', 'admin'])
         // Manajemen Roles
         Route::get('/roles', RoleIndex::class)->name('roles');
 
+        //manajemen pengembalian
+        Route::get('/pengembalian', PengembalianIndex::class)->name('pengembalian');
+
+        // Manajemen Pembatalan Pesanan
+        Route::get('/pembatalan-pesanan', PembatalanPesananIndex::class)->name('pembatalan-pesanan');
+
+        //View Vehicle Damage
+        Route::get('/vehicle-damage', VehicleDamageIndex::class)->name('vehicle-damage');
+
+        //view Vehicle Inspection
+        Route::get('/vehicle-inspection', VehicleInspectionIndex::class)->name('vehicle-inspection');
+
+        //view Driver Logbook
+        Route::get('/driver-logbook', DriverLogbookIndex::class)->name('driver-logbook');
     });
