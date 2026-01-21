@@ -26,7 +26,7 @@ class Sopir extends Model
         return $this->belongsTo(User::class);
     }
     
-    public function peminjamans(): HasMany
+    public function peminjamans()
     {
         return $this->hasMany(Peminjaman::class, 'sopir_id');
     }
